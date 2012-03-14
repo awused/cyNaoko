@@ -17,9 +17,11 @@ import socket
 import struct
 import threading
 import urllib, urlparse
-
-from collections import namedtuple
+import re
+from urllib2 import Request, urlopen
+from collections import namedtuple, deque
 from pprint import pprint
+import ConfigParser
 
 # Set up logging
 logging.basicConfig(format='%(name)-15s:%(levelname)-8s - %(message)s')
@@ -51,7 +53,7 @@ class WebSocket:
         self.logger =logging.getLogger("websocket")
         self.logger.setLevel(logging.DEBUG)
         self.pkt_logger =logging.getLogger("websocket.pkt")
-        self.pkt_logger.setLevel(logging.DEBUG)
+        self.pkt_logger.setLevel(logging.INFO)
 
     def handle_read(self):
         if state == self._CONNECTING:
@@ -149,7 +151,6 @@ class WebSocket:
         (number2, key2) = self.createSecretKey()        
         number3 = random.getrandbits(63)
         key3    = struct.pack(">q", number3);
-        print "key3", repr(key3), repr(key3)
         headers = self._makeHeaders(key1, key2)
         headers_str = ""
         for k in headers.keys():
@@ -190,7 +191,7 @@ class WebSocket:
             c = self.sock.recv(1)
             if c == '\xff':
                 frame = "".join(frame)
-                self.pkt_logger.debug("Received frame: %s", frame)
+                self.pkt_logger.info("Received frame: %s", frame)
                 return frame
             else:
                 frame.append(c)                
@@ -203,7 +204,7 @@ class WebSocket:
 
 # Simple Record Types for variable synchtube constructs
 SynchtubeUser = namedtuple('SynchtubeUser', 
-                           ['sid', 'nick', 'uid', 'auth', 'ava', 'lead', 'mod', 'karma'])
+                           ['sid', 'nick', 'uid', 'auth', 'ava', 'lead', 'mod', 'karma', 'msgs'])
 
 SynchtubeVidInfo = namedtuple('SynchtubeVidInfo',
                             ['site', 'vid', 'title', 'thumb', 'dur'])
@@ -262,13 +263,16 @@ class SocketIOClient:
                                           resource,
                                           self.protocol,
                                           urllib.urlencode(params))
+        self.hbthread = threading.Thread(target=SocketIOClient._heartbeat, args=[self])
+
+    def _heartbeat(self):
+        self.sendHeartBeat(5)
+        self.sched.run()
 
     def __getSessionInfo(self):
         stinfo = urllib.urlopen(self.url).read()
-        print stinfo
         self.sock_info = dict(zip(['sid', 'hb', 'to', 'xports'],
                                   urllib.urlopen(self.url).read().split(':')))
-        print self.sock_info
         self.sid = self.sock_info['sid']
         return self.sid
 
@@ -281,9 +285,12 @@ class SocketIOClient:
         self.ws.send(buf)
 
     def sendHeartBeat(self, next_sec=None):
-        self.send(2)
         if next_sec:
-            self.sched.enter(next_sec, 1, SocketIOClient.sendHeartBeat, (self, next_sec))
+            self.sched.enter(next_sec, 1, SocketIOClient.sendHeartBeat, [self, next_sec])
+        if not self.ws:
+            raise Exception("No WebSocket")
+        self.send(2)
+        self.send(3, data='{}')
             
     def connect(self):
         sid =  self.__getSessionInfo()
@@ -295,8 +302,8 @@ class SocketIOClient:
                                              urllib.urlencode(self.params))
         self.ws = WebSocket(self.host, self.port, sock_resource)
         self.ws.handshake()
-        self.sendHeartBeat()
-
+        self.hbthread.start()
+        
     def recvMessage(self):
         while True:
             frame = self.ws.recvFrame()
@@ -326,34 +333,86 @@ class SocketIOClient:
 # fourth is avatar type, and so on.    
 class SynchtubeClient():
     _ST_IP = "173.255.204.78"
+    _HEADERS = {'User-Agent' : 'DenshiBot',
+                'Accept' : 'text/html,application/xhtml+xml,application/xml;',
+                'Host' : 'www.synchtube.com',
+                'Connection' : 'keep-alive',
+                'Origin' : 'http://www.synchtube.com',
+                'Referer' : 'http://www.synchtube.com'}
 
-    def __init__(self, room, name):
-        self.name = name
-        self.room = room
+    def __init__(self, room, name, pw=None, spam_interval=0.5):
         self.thread = threading.currentThread()
         self.thread.st = self
-        config_url = "http://www.synchtube.com/api/1/room/%s" % (room)
-        config_info = urllib.urlopen(config_url).read()
-        config = json.loads(config_info)
-        config['room']['port'] = int(config['room']['port'])
-        self.config_params = {'b' : 15,  # This might need updating at some point
-                              'r' : config['room']['id'], 
-                              'p' : config['room']['port'],
-                              'i' : socket.gethostbyname(socket.gethostname())}
-        self.logger =logging.getLogger("stclient")
+        self.name = name
+        self.room = room
+        self.leader_queue = deque()
+        self.logger = logging.getLogger("stclient")
         self.logger.setLevel(logging.DEBUG)
         self.chat_logger = logging.getLogger("stclient.chat")
         self.chat_logger.setLevel(logging.DEBUG)
-        self.userlist = {}
+        self.spam_interval = spam_interval
+        self.pending = {}
+        if pw:
+            self.logger.info("Attempting to login")
+            login_url = "http://www.synchtube.com/user/login"
+            login_body = {'email' : name, 'password' : pw};
+            login_data = urllib.urlencode(login_body).encode('utf-8')
+            login_req = Request(login_url, data=login_data, headers=self._HEADERS)
+            login_req.add_header('X-Requested-With', 'XMLHttpRequest')
+            login_req.add_header('Content', 'XMLHttpRequest')
+            login_res  = urlopen(login_req)
+            login_res_headers = login_res.info()
+            if(login_res_headers['Status'] != '200'):
+                raise Exception("Could not login")
+            
+            if(login_res_headers.has_key('Set-Cookie')):
+                self._HEADERS['Cookie'] = login_res_headers['Set-Cookie']
+            self.logger.info("Login successful")
+        room_req = Request("http://www.synchtube.com/r/%s" % (room), headers=self._HEADERS)
+        room_res = urlopen(room_req)
+        room_res_body = room_res.read()
 
-        self.client = client = SocketIOClient(self._ST_IP, config['room']['port'], "socket.io",
+        def getHiddenValue(val):
+            m = re.search(r"<input.*?id=\"%s\".*?value=\"(\S+)\"" % (val), room_res_body)
+            return m.group(1)
+
+        # room_authkey is the only information needed to authenticate you, keep this
+        # secret!
+        self.authkey       = getHiddenValue("room_authkey")        
+        self.port          = getHiddenValue("room_dest_port")
+        self.st_build      = getHiddenValue("st_build")
+        self.userid        = getHiddenValue("room_userid")
+
+        config_url = "http://www.synchtube.com/api/1/room/%s" % (room)
+        config_info = urllib.urlopen(config_url).read()
+        config = json.loads(config_info)
+
+        try:
+            self.logger.info("Obtaining session ID")
+            if(config['room'].has_key('port')):
+                self.port = config['room']['port']
+            self.port = int(self.port)
+            self.config_params = {'b' : self.st_build,
+                                  'r' : config['room']['id'], 
+                                  'p' : self.port,
+                                  'i' : socket.gethostbyname(socket.gethostname())}
+            if self.authkey and self.userid:
+                self.config_params['a'] = self.authkey
+                self.config_params['u'] = self.userid
+        except:
+            self.logger.debug("Config is %s" % (config))
+            if config.has_key('error'):
+                self.logger.error("Synchtube returned error: %s" %(config['error']))
+            raise
+        self.userlist = {}
+        self.logger.info("Starting SocketIO Client")
+        self.client = client = SocketIOClient(self._ST_IP, self.port, "socket.io",
                                               self.config_params)
         self._initHandlers()
         self.room_info = {}
         self.vidlist = SynchtubePlaylist()
         self.thread.close = self.close
         self.closing = False       
-        print self.thread
         client.connect()
 
         while not self.closing:
@@ -421,7 +480,6 @@ class SynchtubeClient():
     def ignore(self, tag, data):
         self.logger.debug("Ignoring %s, %s", tag, data)
 
-
     def nick(self, tag, data):
         sid = data[0]
         nick = data[1]
@@ -433,12 +491,14 @@ class SynchtubeClient():
         # add_user and users data are similar aside from users having
         # a name field at idx 1
         userinfo = data[:]
-        userinfo.insert(1, 'unnamed')        
+        userinfo.insert(1, 'unnamed')
         self._addUser(userinfo)
 
     def remUser(self, tag, data):
         try:
             del self.userlist[data]
+            if (self.pending.has_key(data)):
+                del self.pending[data]
         except KeyError:
             self.logger.exception("Failure to delete user %s from %s", data, self.userlist)
 
@@ -453,9 +513,10 @@ class SynchtubeClient():
                 buf.append(data)
         buf = json.dumps(buf)
         self.client.send(3, data=buf)            
-
+    
     def selfInfo(self, tag, data):
-        self._addUser(data)        
+        self._addUser(data)
+        self.sid = data[0]
         self.send("nick", self.name)
 
     def roomSetting(self, tag, data):
@@ -464,30 +525,77 @@ class SynchtubeClient():
     def _addUser(self, u_arr):
         userinfo = itertools.izip_longest(SynchtubeUser._fields, u_arr)
         userinfo = dict(userinfo)
+        userinfo['msgs'] = deque(maxlen=3)
         user = SynchtubeUser(**userinfo)
         self.userlist[user.sid] = user
+
+    def _leaderActions(self):
+        while len(self.leader_queue) > 0:
+            self.leader_queue.popleft()()
+
+    def takeLeader(self):
+        if self.sid == self.leader:
+            self._leaderActions()
+        self.send("takeleader")
+
+    def asLeader(self, action):
+        self.leader_queue.append(action)
+        self.takeLeader()
         
     def users(self, tag, data):
         for u in data:
             self._addUser(u)
-        
+
+    def _kickUser(self, sid, reason="Requested"):
+        self.sendChat("Kicked %s: (%s)" % (self.userlist[sid].nick, reason))
+        self.send("kick", [sid, reason])
+
+    # By default none of the functions use this.
+    # Don't come crying to me if the bot bans the entire channel
+    def _banUser(self, sid, reason="Requested"):
+        self.sendChat("Banned %s: (%s)" % (self.userlist[sid].nick, reason))        
+        self.send("ban", [sid, reason])
+
     def chat(self, tag, data):
         sid = data[0]
         user = self.userlist[sid]
         msg = data[1]
         self.chat_logger.info("%s: %s" , user.nick, msg)
+        user.msgs.append(time.time())
+        span = user.msgs[-1] - user.msgs[0]
+        if span < (self.spam_interval * 3) and len(user.msgs) > 2:
+            if self.pending.has_key(sid):
+                return
+            else:
+                self.pending[sid] = True
+                reason = "%s sent %d messages in %1.3f seconds" % (user.nick, len(user.msgs), span)
+                def kickUser():
+                    self._kickUser(sid)
+                self.asLeader(kickUser)
     
     def leader(self, tag, data):
         self.leader = data
+        if self.leader == self.sid:
+            self._leaderActions()
         self.logger.debug("Leader is %s", self.userlist[data])
         
     def sendHeartBeat(self):
         self.send()
 
 # replace "ROOMNAME" with the name of the room
-t = threading.Thread(target=SynchtubeClient, args=["ROOMNAME", "DenshiBot"])
+config = ConfigParser.RawConfigParser()
+config.read("denshi.conf")
+room = config.get('denshi', 'room')
+nick = config.get('denshi', 'nick')
+pw   = config.get('denshi', 'pass')
+spam = config.get('denshi', 'spam_interval')
 
 # Spin off the socket thread from the main thread.
-t.start()
-st = t.st
+try:
+    t = threading.Thread(target=SynchtubeClient, args=[room, nick, pw])
+    t.daemon=True;
+    t.start()
+    while True: time.sleep(100)
+except (KeyboardInterrupt, SystemExit):
+    print '\n! Received keyboard interrupt'
 
