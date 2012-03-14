@@ -5,8 +5,8 @@
 
 ## Usage
 <pre>
-  git clone git://github.com/falaina/denshi.git
-  cd denshi
+  git clone git://github.com/Falaina/Denshi.git
+  cd Denshi
   python denshi.py
 </pre>
 
