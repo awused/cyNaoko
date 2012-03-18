@@ -588,7 +588,7 @@ config.read("denshi.conf")
 room = config.get('denshi', 'room')
 nick = config.get('denshi', 'nick')
 pw   = config.get('denshi', 'pass')
-spam = config.get('denshi', 'spam_interval')
+spam = float(config.get('denshi', 'spam_interval'))
 
 # Spin off the socket thread from the main thread.
 try:
