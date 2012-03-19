@@ -461,7 +461,9 @@ class SynchtubeClient():
                          "initdone"       : self.ignore}
 
     def _addVideo(self, v):
+        v[0] = v[0][:len(SynchtubeVidInfo._fields)]
         v[0] = SynchtubeVidInfo(*v[0])
+        v = v[:len(SynchtubeVideo._fields)]
         vid = SynchtubeVideo(*v)
         self.vidlist.append(vid)
 
