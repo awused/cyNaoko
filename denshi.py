@@ -294,7 +294,7 @@ class SocketIOClient:
             raise Exception("No WebSocket")
         now = time.time()
         hb_diff = now - self.last_hb
-        self.pkt_logger.info("Time since last heartbeat %.3f", hb_diff)
+        self.pkt_logger.debug("Time since last heartbeat %.3f", hb_diff)
         if hb_diff > TIMEOUT:
             raise Exception("Socket.IO Timeout, %.3f since last heartbeat" % (hb_diff))
         self.send(2)
