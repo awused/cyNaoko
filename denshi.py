@@ -29,6 +29,9 @@ logger = logging.getLogger("socket.io client")
 logger.setLevel(logging.DEBUG)
 (info, debug, warning, error) = (logger.info, logger.debug, logger.warning, logger.error)
 
+# Default Timeout.
+TIMEOUT   = 25
+
 # Implementation of WebSocket client as per draft-ietf-hybi-thewebsocketprotocol-00
 # http://tools.ietf.org/html/draft-ietf-hybi-thewebsocketprotocol-00
 class WebSocket:
@@ -251,7 +254,7 @@ class SocketIOClient:
         self.logger.setLevel(logging.DEBUG)
         self.pkt_logger = logging.getLogger("socketio.pkt")
         self.pkt_logger.setLevel(logging.INFO)
-        self.ip = socket.gethostbyname(socket.gethostname())        
+        self.ip = socket.gethostbyname(socket.gethostname())
         self.sched = sched.scheduler(time.time, time.sleep)
         if https:
             self.proto = "https://"
@@ -289,6 +292,11 @@ class SocketIOClient:
             self.sched.enter(next_sec, 1, SocketIOClient.sendHeartBeat, [self, next_sec])
         if not self.ws:
             raise Exception("No WebSocket")
+        now = time.time()
+        hb_diff = now - self.last_hb
+        self.pkt_logger.info("Time since last heartbeat %.3f", hb_diff)
+        if hb_diff > TIMEOUT:
+            raise Exception("Socket.IO Timeout, %.3f since last heartbeat" % (hb_diff))
         self.send(2)
         self.send(3, data='{}')
             
@@ -302,6 +310,7 @@ class SocketIOClient:
                                              urllib.urlencode(self.params))
         self.ws = WebSocket(self.host, self.port, sock_resource)
         self.ws.handshake()
+        self.last_hb = time.time()
         self.hbthread.start()
         
     def recvMessage(self):
@@ -319,6 +328,8 @@ class SocketIOClient:
         else:
             data = None
         if msg_type == self.HEARTBEAT:
+            now = time.time()
+            self.last_hb = now
             self.sendHeartBeat()
         return (msg_type, data)
 
@@ -414,7 +425,7 @@ class SynchtubeClient():
         self.thread.close = self.close
         self.closing = False       
         client.connect()
-
+        self.last_hb = time.time()
         while not self.closing:
             data = client.recvMessage()
             try:
@@ -423,6 +434,7 @@ class SynchtubeClient():
                 print "Failed to parse", data
                 raise e;
             if not data or len(data) == 0:
+                # FIXME: I forgot how to handle synchtube-level heartbeats
                 self.sendHeartBeat()
                 continue
             st_type = data[0]
@@ -430,7 +442,7 @@ class SynchtubeClient():
                 if len(data) > 1:                    
                     arg = data[1]
                 else:
-                    arg = ''                    
+                    arg = ''
                 fn = self.handlers[st_type]
             except KeyError:
                 self.logger.warn("No handler for %s [%s]", st_type, arg)
@@ -532,6 +544,8 @@ class SynchtubeClient():
         self.userlist[user.sid] = user
 
     def _leaderActions(self):
+        if self.thread != threading.currentThread():
+            raise Exception("_leaderActions should not be called outside the SynchtubeClient thread")
         while len(self.leader_queue) > 0:
             self.leader_queue.popleft()()
 
