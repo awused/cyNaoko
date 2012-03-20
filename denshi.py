@@ -469,19 +469,20 @@ class SynchtubeClient():
                          "remove_user"    : self.remUser,
                          "nick"           : self.nick,
                          "pm"             : self.play,
+                         "am"             : self.addMedia,
+                         "cm"             : self.changeMedia,
                          "playlist"       : self.playlist,
                          "initdone"       : self.ignore}
-
-    def _addVideo(self, v):
-        v[0] = v[0][:len(SynchtubeVidInfo._fields)]
-        v[0] = SynchtubeVidInfo(*v[0])
-        v = v[:len(SynchtubeVideo._fields)]
-        vid = SynchtubeVideo(*v)
-        self.vidlist.append(vid)
 
     def close(self):
         self.closing = True
 
+    def addMedia(self, tag, data):
+        self._addVideo(data)
+
+    def changeMedia(self, tag, data):
+        self.logger.info("Ignoring cm (change media) message: %s" % (data))
+        
     def playlist(self, tag, data):
         for v in data:
             self._addVideo(v)
@@ -489,7 +490,6 @@ class SynchtubeClient():
 
     def play(self, tag, data):
         self.logger.debug("Playing %s %s", tag, data)
-        
 
     def ignore(self, tag, data):
         self.logger.debug("Ignoring %s, %s", tag, data)
@@ -535,42 +535,22 @@ class SynchtubeClient():
 
     def roomSetting(self, tag, data):
         self.room_info[tag] = data
-
-    def _addUser(self, u_arr):
-        userinfo = itertools.izip_longest(SynchtubeUser._fields, u_arr)
-        userinfo = dict(userinfo)
-        userinfo['msgs'] = deque(maxlen=3)
-        user = SynchtubeUser(**userinfo)
-        self.userlist[user.sid] = user
-
-    def _leaderActions(self):
-        if self.thread != threading.currentThread():
-            raise Exception("_leaderActions should not be called outside the SynchtubeClient thread")
-        while len(self.leader_queue) > 0:
-            self.leader_queue.popleft()()
-
+        
     def takeLeader(self):
         if self.sid == self.leader:
             self._leaderActions()
         self.send("takeleader")
 
     def asLeader(self, action):
+        """ perform action (a callable) as room leader.
+        If client is not currently leader, it will attempt to take leader
+        """
         self.leader_queue.append(action)
         self.takeLeader()
         
     def users(self, tag, data):
         for u in data:
             self._addUser(u)
-
-    def _kickUser(self, sid, reason="Requested"):
-        self.sendChat("Kicked %s: (%s)" % (self.userlist[sid].nick, reason))
-        self.send("kick", [sid, reason])
-
-    # By default none of the functions use this.
-    # Don't come crying to me if the bot bans the entire channel
-    def _banUser(self, sid, reason="Requested"):
-        self.sendChat("Banned %s: (%s)" % (self.userlist[sid].nick, reason))        
-        self.send("ban", [sid, reason])
 
     def chat(self, tag, data):
         sid = data[0]
@@ -594,7 +574,67 @@ class SynchtubeClient():
         if self.leader == self.sid:
             self._leaderActions()
         self.logger.debug("Leader is %s", self.userlist[data])
+
+    # The following private API methods are fairly low level and work with
+    # synchtube sid's (session ids) or raw data arrays. They will usually
+    # Fire off a synchtube message without any validation. Higher-level
+    # public API methods should be built on top of them.
+
+    def _addUser(self, u_arr):
+        """Add the user described by u_arr
+
+        u_arr should be in the following format:
+        [<sid>, <nick>, <uid>, <authenticated>, <avatar-type>, <leader>, <moderator>, <karma>]
+
+        This is the format used by user arrays from the synchtube "users" message
+        """
+        userinfo = itertools.izip_longest(SynchtubeUser._fields, u_arr)
+        userinfo = dict(userinfo)
+        userinfo['msgs'] = deque(maxlen=3)
+        user = SynchtubeUser(**userinfo)
+        self.userlist[user.sid] = user
         
+    def _addVideo(self, v):
+        """Add the video described by v"""
+        # FIXME: document the format of a video message
+        v[0] = v[0][:len(SynchtubeVidInfo._fields)]
+        v[0] = SynchtubeVidInfo(*v[0])
+        v = v[:len(SynchtubeVideo._fields)]
+        vid = SynchtubeVideo(*v)
+        self.vidlist.append(vid)
+        
+        
+    def _kickUser(self, sid, reason="Requested"):
+        """Kick user using their sid(session id)"""
+        self.sendChat("Kicked %s: (%s)" % (self.userlist[sid].nick, reason))
+        self.send("kick", [sid, reason])
+
+    # By default none of the functions use this.
+    # Don't come crying to me if the bot bans the entire channel
+    def _banUser(self, sid, reason="Requested"):
+        """Ban user using their sid(session id)
+        The bought can not unban users, and bans last until Synchtube resets.
+        Use with care.
+        """
+        self.sendChat("Banned %s: (%s)" % (self.userlist[sid].nick, reason))        
+        self.send("ban", [sid, reason])
+        
+
+    def _leaderActions(self):
+        """Perform pending pending leader actions.
+        This should _NOT_ be called outside the main SynchtubeClient's thread
+        """
+        if self.thread != threading.currentThread():
+            raise Exception("_leaderActions should not be called outside the SynchtubeClient thread")
+        while len(self.leader_queue) > 0:
+            self.leader_queue.popleft()()
+            
+    def _giveLeader(self, sid):
+        """Give leader to another user using their sid(session id)
+        This command does not ensure the client is currently leader before executing
+        """
+        self.send("toss", sid)
+
     def sendHeartBeat(self):
         self.send()
 
