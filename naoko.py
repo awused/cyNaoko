@@ -28,7 +28,7 @@ import ConfigParser
 TIMEOUT   = 25
 
 #Logging Level
-logLevel = logging.DEBUG
+logLevel = logging.WARNING
 
 # Set up logging
 logging.basicConfig(format='%(name)-15s:%(levelname)-8s - %(message)s')
