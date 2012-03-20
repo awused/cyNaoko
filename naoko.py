@@ -38,7 +38,7 @@ logger.setLevel(logLevel)
 
 # Implementation of WebSocket client as per draft-ietf-hybi-thewebsocketprotocol-00
 # http://tools.ietf.org/html/draft-ietf-hybi-thewebsocketprotocol-00
-class WebSocket:
+class WebSocket(object):
     version = 0
     # Socket states
     _DISCONNECTED = 0
@@ -239,7 +239,7 @@ class SynchtubePlaylist(list):
 
 # SocketIO "client" built on top of a raw underlying WebSocket
 # Implemented as per https://github.com/LearnBoost/socket.io-spec
-class SocketIOClient:
+class SocketIOClient(object):
     protocol = 1
 
     # Socket IO Message types. There are more, but these are the bare minimum.
@@ -339,7 +339,7 @@ class SocketIOClient:
 
 #Basic IRC client
 #Built upon the instructions provided by http://wiki.shellium.org/w/Writing_an_IRC_bot_in_Python
-class IRCClient:
+class IRCClient(object):
     def __init__ (self, server, channel, nick, pw):
         self.logger = logging.getLogger("ircclient")
         self.logger.setLevel(logLevel)
@@ -387,7 +387,7 @@ class IRCClient:
 # (uid 22262). The first field is the session identifier,
 # second is uid, third is whether or not client is authenticated
 # fourth is avatar type, and so on.
-class SynchtubeClient:
+class SynchtubeClient(object):
     _ST_IP = "173.255.204.78"
     _HEADERS = {'User-Agent' : 'DenshiBot',
                 'Accept' : 'text/html,application/xhtml+xml,application/xml;',
