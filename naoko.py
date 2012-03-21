@@ -21,20 +21,9 @@ import urllib, urlparse
 import re
 from urllib2 import Request, urlopen
 from collections import namedtuple, deque
-from pprint import pprint
+#from pprint import pprint
 import ConfigParser
-
-# Default Timeout.
-TIMEOUT   = 25
-
-#Logging Level
-logLevel = logging.WARNING
-
-# Set up logging
-logging.basicConfig(format='%(name)-15s:%(levelname)-8s - %(message)s')
-logger = logging.getLogger("socket.io client")
-logger.setLevel(logLevel)
-(info, debug, warning, error) = (logger.info, logger.debug, logger.warning, logger.error)
+from settings import *
 
 # Implementation of WebSocket client as per draft-ietf-hybi-thewebsocketprotocol-00
 # http://tools.ietf.org/html/draft-ietf-hybi-thewebsocketprotocol-00
@@ -165,6 +154,7 @@ class WebSocket(object):
 
         self.logger.info("Connecting to %s", self.host)
         self.sock = sock = socket.socket()
+        sock.settimeout(TIMEOUT)
         sock.connect((self.host, self.port))
 
         self.pkt_logger.debug("Sending %s", get_str)
@@ -205,6 +195,7 @@ class WebSocket(object):
         return self.readFrame()
 
     def close(self):
+        self.sock.settimeout(0)
         self.sock.close()
 
 # Simple Record Types for variable synchtube constructs
@@ -216,26 +207,6 @@ SynchtubeVidInfo = namedtuple('SynchtubeVidInfo',
 
 SynchtubeVideo = namedtuple('SynchtubeVideo',
                               ['vidinfo', 'v_sid', 'uid', 'nick'])
-
-class SynchtubePlaylist(list):
-    def __getitem__(self, key):
-        if isinstance(key, int):
-            return list.__getitem__(self, key)
-
-        for l in self:
-            if l.v_sid == key:
-                return l
-
-    def __setitem__(self, key, value):
-        if isinstance(key, int):
-            return list.__setitem__(self, key, value)
-
-        for i in range(len(self)):
-            if self[i].v_sid == key:
-                self[i] = value
-                return
-        self.append(value)
-
 
 # SocketIO "client" built on top of a raw underlying WebSocket
 # Implemented as per https://github.com/LearnBoost/socket.io-spec
@@ -284,6 +255,7 @@ class SocketIOClient(object):
     def close(self):
         self.ws.close()
         if self.heartBeatEvent:
+            self.logger.info ("Heartbeats Stopped")
             self.sched.cancel(self.heartBeatEvent)
 
     def send(self, msg_type=3, sock_id='', end_pt='', data=''):
@@ -350,6 +322,7 @@ class IRCClient(object):
         #self.logger.debug ("%s %s %s %s", self.server, self.channel, self.nick, pw)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.connect((self.server, 6667)) # Here we connect to the server using port 6667
+        self.sock.settimeout(240)
         self.send("USER "+ self.nick +" "+ self.nick +" "+ self.nick +" :test\n") # user authentication
         self.send("NICK "+ self.nick +"\n") # here we actually assign the nick to the bot
         if pw:
@@ -360,6 +333,7 @@ class IRCClient(object):
         self.send ("PONG :pingis\n")
 
     def close (self):
+        self.sock.settimeout(0)
         self.send ("QUIT :quit\n")
         self.sock.close()
 
@@ -367,11 +341,10 @@ class IRCClient(object):
         self.send("PRIVMSG " + self.channel + " :" + msg + "\n")
 
     def recvMessage (self):
-        while True:
-            frame = self.sock.recv(2048)
-            frame = frame.strip("\n\r")
-            self.logger.debug ("Received IRC Frame %s", frame)
-            return frame
+        frame = self.sock.recv(2048)
+        frame = frame.strip("\n\r")
+        self.logger.debug ("Received IRC Frame %s", frame)
+        return frame
 
     def send (self, msg):
         self.logger.debug ("IRC Send %s", msg.encode("utf-8"))
@@ -398,6 +371,7 @@ class SynchtubeClient(object):
 
     def __init__(self, room, name, pw, spam_interval, server, channel, irc_nick,  ircpw):
         self.thread = threading.currentThread()
+        self.closeLock = threading.Lock()
         self.thread.st = self
         self.name = name
         self.room = room
@@ -468,15 +442,14 @@ class SynchtubeClient(object):
             raise
         self.userlist = {}
         self.logger.info("Starting SocketIO Client")
-        self.client = client = SocketIOClient(self._ST_IP, self.port, "socket.io",
+        self.client = SocketIOClient(self._ST_IP, self.port, "socket.io",
                                               self.config_params)
         self._initHandlers()
         self._initCommandHandlers()
         self.room_info = {}
-        self.vidlist = SynchtubePlaylist()
+        self.vidlist = []
         self.thread.close = self.close
         self.closing = False
-        client.connect()
         if irc_nick:
             self.irc_queue = deque()
             self.logger.info("Starting IRC Client")
@@ -489,6 +462,35 @@ class SynchtubeClient(object):
         else:
             self.irc_queue = deque(maxlen=0)
 
+        self.stthread = threading.Thread (target=SynchtubeClient._stloop, args=[self])
+        self.stthread.start()
+
+        #lastMessage = 0
+        status = True
+        while status:
+            # Sleeping first lets everything get initialized
+            # The parent process will wait
+            time.sleep(30)
+            try:
+                status = self.stthread.isAlive()
+                status = status and (not irc_nick or self.ircthread.isAlive())
+                status = status and (not irc_nick or self.bridgethread.isAlive())
+                status = status and self.client.hbthread.isAlive()
+            except Exception as e:
+                self.logger.error (e)
+                status = False
+            self.logger.debug ("Status is %s", status)
+            #else: self.sendStatus()
+            #lastMessage = time.time()
+            # Sleep for 30 seconds
+            #while (time.time() < lastMessage + 30):
+                #time.sleep(lastMessage - time.time() + 30)
+        else:
+            self.close()
+
+    def _stloop(self):
+        client = self.client
+        client.connect()
         while not self.closing:
             data = client.recvMessage()
             try:
@@ -511,7 +513,8 @@ class SynchtubeClient(object):
             else:
                 fn(st_type, arg)
         else:
-            self.client.close()
+            self.logger.info ("Synchtube Loop Closed")
+            self.close()
 
     def _ircloop(self):
         client = self.ircclient
@@ -522,14 +525,14 @@ class SynchtubeClient(object):
                 if data.find("PING :") != -1:
                     client.ping()
                 if data.find("PRIVMSG " + self.channel + " :") != -1:
-                    #self.logger.info (repr(data))
                     name = data.split('!', 1)[0][1:]
                     msg = data[data.find("PRIVMSG " + self.channel + " :") + len("PRIVMSG " + self.channel + " :"):]
                     if not name == self.irc_nick:
                         self.st_queue.append("(" + name + ") " + msg)
                     self.logger.info ("IRC %s:%s", name, msg)
         else:
-            self.ircclient.close()
+            self.logger.info ("IRC Loop Closed")
+            self.close()
 
     def _bridgeloop(self):
         while not self.closing:
@@ -542,6 +545,8 @@ class SynchtubeClient(object):
                 if len (self.st_queue) > 0:
                     self.sendChat(self.st_queue.popleft())
             time.sleep(self.spam_interval)
+        else:
+            self.logger.info ("Bridge Loop Closed")
 
     def _initHandlers(self):
         self.handlers = {"<"                : self.chat,
@@ -563,11 +568,13 @@ class SynchtubeClient(object):
                          "pm"               : self.play,
                          "am"               : self.addMedia,
                          "cm"               : self.changeMedia,
+                         "rm"               : self.removeMedia,
+                         "mm"               : self.moveMedia,
                          "playlist"         : self.playlist,
                          "initdone"         : self.ignore}
 
     def _initCommandHandlers(self):
-        self.commandHandlers = {"kill"              : self.kill,
+        self.commandHandlers = {"restart"           : self.restart,
                                 "steal"             : self.steal,
                                 "mod"               : self.makeLeader,
                                 "mute"              : self.mute,
@@ -578,12 +585,33 @@ class SynchtubeClient(object):
     def getUserByNick(self, nick):
         try: return self.userlist[(i for i in self.userlist if self.userlist[i].nick.lower() == nick.lower()).next()]
         except StopIteration: return None
+        
+    def getVideoIndexById(self, vid):
+        try: return (idx for idx, ele in enumerate(self.vidlist) if ele.v_sid == vid).next()
+        except StopIteration: return -1
 
     def close(self):
+        self.closeLock.acquire()
+        if self.closing: 
+            self.closeLock.release()
+            return
         self.closing = True
+        self.closeLock.release()
+        self.client.close()
+        if (self.ircclient):
+            self.ircclient.close()
 
     def addMedia(self, tag, data):
         self._addVideo(data)
+
+    def removeMedia(self, tag, data):
+        self._removeVideo(data)
+
+    def moveMedia(self, tag, data):
+        after = None
+        if "after" in data:
+            after = data["after"]
+        self._moveVideo(data["id"], after)
 
     def changeMedia(self, tag, data):
         self.logger.info("Ignoring cm (change media) message: %s" % (data))
@@ -603,7 +631,7 @@ class SynchtubeClient(object):
         msg += "Muted]"
         self.sendChat(msg)
 
-    def kill(self, command, user, data):
+    def restart(self, command, user, data):
         if user.mod:
             self.close()
 
@@ -714,6 +742,7 @@ class SynchtubeClient(object):
         if not user.mod: return
         args = data.split(' ', 1)
         target = self.getUserByNick(args[0])
+        self.logger.info ("Requested mod change to %s by %s", target, user)
         if not target: return
         self.changeLeader(target.sid)
 
@@ -747,7 +776,7 @@ class SynchtubeClient(object):
                 return
             else:
                 self.pending[sid] = True
-                self.logger.info("attempted kick")
+                self.logger.info("Attempted kick of %s for spam", user.nick)
                 reason = "%s sent %d messages in %1.3f seconds" % (user.nick, len(user.msgs), span)
                 def kickUser():
                     self._kickUser(sid, reason)
@@ -784,6 +813,19 @@ class SynchtubeClient(object):
         vid = SynchtubeVideo(*v)
         self.vidlist.append(vid)
 
+    def _removeVideo(self, v):
+        idx = self.getVideoIndexById (v)
+        if idx >= 0:
+            self.vidlist.pop(idx)
+
+    def _moveVideo(self, v, after=None):
+        video = self.vidlist.pop(self.getVideoIndexById(v))
+        pos = 0
+        if after:
+            pos = self.getVideoIndexById(after) + 1
+        self.vidlist.insert(pos, video)
+        self.logger.debug ("Insterted %s after %s", video, self.vidlist[pos - 1])
+
     # Kick user using their sid(session id)
     def _kickUser(self, sid, reason="Requested"):
         self.sendChat("Kicked %s: (%s)" % (self.userlist[sid].nick, reason))
@@ -798,7 +840,7 @@ class SynchtubeClient(object):
     # Perform pending pending leader actions.
     # This should _NOT_ be called outside the main SynchtubeClient's thread
     def _leaderActions(self):
-        if self.thread != threading.currentThread():
+        if self.stthread != threading.currentThread():
             raise Exception("_leaderActions should not be called outside the SynchtubeClient thread")
         while len(self.leader_queue) > 0:
             self.leader_queue.popleft()()
@@ -813,26 +855,3 @@ class SynchtubeClient(object):
 
     def sendHeartBeat(self):
         self.send()
-
-# replace "ROOMNAME" with the name of the room
-config = ConfigParser.RawConfigParser()
-config.read("naoko.conf")
-room = config.get('naoko', 'room')
-nick = config.get('naoko', 'nick')
-pw   = config.get('naoko', 'pass')
-spam = float(config.get('naoko', 'spam_interval'))
-server = config.get('naoko', 'irc_server')
-channel = config.get('naoko', 'irc_channel')
-ircnick = config.get('naoko', 'irc_nick')
-ircpw = config.get('naoko', 'irc_pass')
-
-# Spin off the socket thread from the main thread.
-try:
-    t = threading.Thread(target=SynchtubeClient, args=[room, nick, pw, spam, server, channel, ircnick, ircpw])
-    t.daemon=True;
-    t.start()
-    while t.isAlive(): time.sleep(100)
-    print '\n Shutting Down'
-except (KeyboardInterrupt, SystemExit):
-    print '\n! Received keyboard interrupt'
-

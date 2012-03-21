@@ -7,7 +7,7 @@
 <pre>
   git clone git://github.com/Suwako/Naoko.git
   cd Naoko
-  python naoko.py
+  python main.py
 </pre>
 
 Edit the included `naoko.conf` file to control the settings. By default the bot will join room "Denshi" with the nick "DenshiBot"
