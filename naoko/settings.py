@@ -1,4 +1,5 @@
-﻿# Contains settings that are relevant in multiple places
+﻿#!/usr/bin/env python
+# Contains settings that are relevant in multiple places
 
 import logging
 
