@@ -214,7 +214,9 @@ class WebSocket(object):
                 self.pkt_logger.debug("Received frame: %r", frame)
                 return frame
             else:
-                frame.append(c)
+                # Filter out invalid characters
+                if ord(c) > 31 and ord(c) != 127:
+                    frame.append(c)
         else:
             self.sock.close()
 
@@ -518,7 +520,7 @@ class SynchtubeClient(object):
         client = self.client
         client.connect()
         while not self.closing:
-            (valid, data) = self.filterString(client.recvMessage())
+            data = client.recvMessage()
             try:
                 data = json.loads(data)
             except ValueError as e:
