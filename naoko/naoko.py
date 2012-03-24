@@ -1023,6 +1023,9 @@ class SynchtubeClient(object):
     # Give leader to another user using their sid(session id)
     # This command does not ensure the client is currently leader before executing
     def _tossLeader(self, sid):
+        # Short sleep to give Synchtube some time to react
+        # TODO -- Confirm whether this fixes the rare bug I was getting
+        time.sleep(0.05)
         self.send("toss", sid)
 
     def sendHeartBeat(self):
