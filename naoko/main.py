@@ -4,7 +4,6 @@ import os, sys, time
 import signal
 import threading
 from multiprocessing import Pipe, Process
-#import ConfigParser
 name = "Launcher"
 
 from naoko import SynchtubeClient
@@ -34,7 +33,7 @@ class throttle:
 def spawn(script):
     (pipe_in, pipe_out) = Pipe(False)
     p = Process(target=script, args=(pipe_out,))
-    p.daemon = True
+    p.daemon = True # If the main process crashes for any reason then kill the child process
     p.start()
     pipe_out.close()
     return (pipe_in, p)
@@ -48,6 +47,7 @@ def run(script):
         while child_pipe.poll(TIMEOUT):
             buf = child_pipe.recv()
             if buf == "RESTART":
+                time.sleep(5)
                 break
             elif buf == "HEALTHY":
                 continue
@@ -55,6 +55,8 @@ def run(script):
                 raise Exception("Received invalid message (%s)"% (buf))
     except EOFError:
         print "[%s] EOF on child pipe" % (name)
+    except IOError:
+        print "[%s] IOError on child pipe" % (name)
     except OSError as e:
         print "Received exception ", str(e)
     finally:
@@ -64,14 +66,16 @@ if __name__ == '__main__':
     try:
         while True:
             run(SynchtubeClient)
-    except IOError, AssertionError: # Windows Python process bug, you get the old code
-        print "Failed to fork a process likely due to bugs in Python for Windows"
-        print "Running Naoko anyway, but she will not automatically restart"
-        try:
-            t = threading.Thread(target=SynchtubeClient)
-            t.daemon=True;
-            t.start()
-            while t.isAlive(): time.sleep(TIMEOUT)
-            print '\n Shutting Down'
-        except (KeyboardInterrupt):
-            print '\n! Received keyboard interrupt'
+    except KeyboardInterrupt:
+        print "\n Shutting Down"
+"""except IOError, AssertionError: # Windows Python process bug, you get the old code
+    print "Failed to fork a process likely due to bugs in Python for Windows"
+    print "Running Naoko anyway, but she will not automatically restart"
+    try:
+        t = threading.Thread(target=SynchtubeClient)
+        t.daemon=True;
+        t.start()
+        while t.isAlive(): time.sleep(TIMEOUT)
+        print '\n Shutting Down'
+    except (KeyboardInterrupt):
+        print '\n! Received keyboard interrupt'"""
