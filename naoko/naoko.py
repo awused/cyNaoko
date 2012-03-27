@@ -459,6 +459,7 @@ class SynchtubeClient(object):
             self.config_params = {'b' : self.st_build,
                                   'r' : config['room']['id'],
                                   'p' : self.port,
+                                  't' : int (round(time.time()*1000)),
                                   'i' : socket.gethostbyname(socket.gethostname())}
             if self.authkey and self.userid:
                 self.config_params['a'] = self.authkey
@@ -803,7 +804,7 @@ class SynchtubeClient(object):
     def selfInfo(self, tag, data):
         self._addUser(data)
         self.sid = data[0]
-        self.send("nick", self.name)
+        #self.send("nick", self.name)
 
     def roomSetting(self, tag, data):
         self.room_info[tag] = data
