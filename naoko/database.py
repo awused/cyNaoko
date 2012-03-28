@@ -13,6 +13,10 @@
 
 import sqlite3
 import logging
+from settings import logLevel
+
+ProgrammingError = sqlite3.ProgrammingError
+DatabaseError    = sqlite3.DatabaseError
 
 def dbopen(fn):
    """
@@ -23,9 +27,9 @@ def dbopen(fn):
       if self._state == "open":
          return fn(self, *args, **kwargs)
       elif self._state == "closed":
-         raise IOError("Cannot perform operations on closed database")
+         raise DatabaseError("Cannot perform operations on closed database")
       else:
-         raise Exception("Database must be open to perform operations")
+         raise DatabaseError("Database must be open to perform operations")
    return dbopen_func
       
 
@@ -38,6 +42,7 @@ class NaokoCursor(sqlite3.Cursor):
    
    def __init__(self, *args, **kwargs):
       self.logger = logging.getLogger('naokocursor')
+      self.logger.setLevel(logLevel)      
       self.id = NaokoCursor._id
       NaokoCursor._id += 1            
       sqlite3.Cursor.__init__(self, *args, **kwargs)
@@ -53,7 +58,7 @@ class NaokoCursor(sqlite3.Cursor):
       if not self.logger:
          return
       if exc_type and exc_value:
-         self.logger.error("%s closed due to %s: %s" % (self, exc_type, exc_val))
+         self.logger.error("%s closed due to %s: %s" % (self, exc_type, exc_value))
       else:
          self.logger.debug("%s closed" % self)
 
@@ -70,14 +75,14 @@ class NaokoDB(object):
    
    _dbinfo_sql = "SELECT name FROM sqlite_master WHERE type='table'"
    _required_tables = set(['video_stats', 'videos'])
-
+                     
+   # Low level database handling methods
    def __enter__(self):
       return self
    
    def __init__(self, database, initscript):
       self.logger = logging.getLogger("database")
-      from logging import DEBUG
-      self.logger.setLevel(DEBUG)
+      self.logger.setLevel(logLevel)
       self.initscript = initscript
       self.db_file = database
       self.con = sqlite3.connect(database)
@@ -126,14 +131,14 @@ class NaokoDB(object):
       return self.con.cursor(NaokoCursor)
 
    @dbopen
-   def execute(self, stmt):
+   def execute(self, stmt, *args):
       """
       Opens a cursor using .cursor and executes stmt.
       
       Returns the open cursor.
       """
       cur = self.cursor()
-      cur.execute(stmt)
+      cur.execute(stmt, *args)
       return cur
 
    @dbopen
@@ -152,10 +157,77 @@ class NaokoDB(object):
       Closes the associated sqlite3 connection.
       """
       self.__exit__(None, None, None)
+
+
+   # Higher level video/poll/chat-related APIs
+   def getVideos(self, num, columns=None, orderby=None):
+      """
+      Retrieves videos from the video_stats table of Naoko's database.
+
+      num must be an integer specifying the maximum number of rows to return.
       
+      columns must be a tuple specifying which columns to retrieve. By default
+      all columns will be retrieved
+
+      orderby must be a tuple specifying the orderby clause. Valid values are
+      ('id', 'ASC'), ('id', 'DESC'), or ('RANDOM()')
+
+      The statement executed against the database will roughly be
+      SELECT <columns> FROM video_stats [ORDER BY <orderby>] [LIMIT ?]
+      """
+
+      
+      _tables = {'videos' : set(['type', 'id', 'duration_ms']),
+              'video_stats' : set(['type', 'id', 'uname', 'plid'])}
+      
+      if not columns:
+         columns = _tables['videos']
+
+      columns = set(columns)
+      if not columns <= _tables['videos']:
+         raise ProgrammingError("Argument columns: %s not a subset of video "
+                                "columns %s" % (columns, _tables['videos']))
+
+      sel_list = ', '.join(_tables['videos'].union(columns))
+      sql = 'SELECT %s FROM videos ' % (sel_list)
+      
+      def matchOrderBy(this, other):
+         valid = this == other
+         if not valid:
+            valid = (len(this) == 2) and (len(other) == 2)
+            for i in range(len(this)):
+               valid = valid and (this[i].lower() == other[1].lower())
+         return valid
+         
+         valid = this and other and (this[0].lower() != other[0].lower())
+         if valid and (len(this) == 2) and this[1] and other[1]:
+            return valid and (this[1].lower() == other[1].lower())
+         else:
+            return valid and (this[1] == other[1])
+         
+      if orderby is None:
+         pass
+      elif matchOrderBy(orderby, ('id', 'ASC')):
+         sql += 'ORDER BY id ASC '
+      elif matchOrderBy(orderby, ('id', 'DESC')):
+         sql += 'ORDER BY id DESC '
+      elif matchOrderBy(orderby, ('RANDOM()',)):
+         sql += 'ORDER BY RANDOM() '
+      else:
+         raise ProgrammingError("Invalid orderby %s" % (orderby))
+
+      if isinstance(num, (int, long)):
+         sql += 'LIMIT ?'
+      else:
+         raise ProgrammingError("Invalid num %s" % (num))
+
+      self.logger.debug("Generated SQL %s" % (sql))
+
+      with self.execute(sql, (num,)) as cur:
+         return cur.fetchall()
 
 if __name__ == '__main__':
-   import naoko
+   logging.basicConfig(format='%(name)-15s:%(levelname)-8s - %(message)s')   
    testvids = [('yt', 'Fp7dKcCBXHI', 37 *1000, u'【English Sub】 Kyouko Canyon 【Yuru Yuri】'),
                ('yt', 'N_5Lllcj3rY', 103*1000, u'Jumping Kyouko [YuruYuri Eyecatch MAD]')]
                                 
@@ -170,3 +242,14 @@ if __name__ == '__main__':
          while row:
             print "**Retrieved row: %s" % (row,)
             row = cur.fetchone()            
+
+      assert len(db.getVideos(1)) == 1, 'db.getVideos(1) did not return 1 video'
+
+      rand_rows = db.getVideos(5, None, ('RANDOM()',))
+      assert len(rand_rows)  <= 5, 'db.getVideos(5) did not return less than 5 videos'
+
+      sorted_rows = db.getVideos(2, set(['id']), ('id', 'ASC'))
+      assert sorted_rows == sorted(sorted_rows), "sorted rows not actually sorted"
+
+      
+      
