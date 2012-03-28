@@ -678,7 +678,9 @@ class SynchtubeClient(object):
                                 "kick"              : self.kick,
                                 "steak"             : self.steak,
                                 "ban"               : self.ban,
-                                "skip"              : self.skip}
+                                "skip"              : self.skip,
+                                "d"                 : self.dice,
+                                "dice"              : self.dice}
 
     def getUserByNick(self, nick):
         (valid, name) = self.filterString(nick, True)
@@ -754,6 +756,37 @@ class SynchtubeClient(object):
     def mute(self, command, user, data):
         if user.mod:
             self.muted = True
+
+    # TODO -- make commands like $8d6 work
+    def dice(self, command, user, data):
+        if not data: return
+        params = data
+        if type (params) is not str and type(params) is not unicode:
+            params = str(params)
+        params = params.strip().split()
+        if len (params) < 2: return
+        #if (not params[0].isdigit()) or (not params[1].isdigit()): return
+        num = 0
+        size = 0
+        try:
+            num = int(params[0])
+            size = int (params[1])
+            if num < 1 or size < 1 or num > 1000 or size > 1000: return # Limits
+            # TODO - do something smarter than rolling each die
+            sum = 0
+            i = 0
+            output = []
+            while i < num:
+                rand = random.randint (1, size)
+                if i < 5:
+                    output.append(str(rand))
+                if i == 5:
+                    output.append("...")
+                sum = sum + rand
+                i = i+1
+            self.enqueueMsg("%dd%d: %d [%s]" % (num, size, sum, ",".join (output)))
+        except Exception as e:
+            self.logger.debug (e)
 
     def unmute (self, command, user, data):
         if user.mod:
