@@ -948,6 +948,7 @@ class SynchtubeClient(object):
         self.room_info[tag] = data
         if tag == "tv?" and self.room_info["tv?"]:
             self.leader_sid = None
+            self.leading.clear()
 
     def takeLeader(self):
         if self.sid == self.leader_sid:
