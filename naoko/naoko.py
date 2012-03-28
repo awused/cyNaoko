@@ -587,7 +587,7 @@ class SynchtubeClient(object):
             self.close()
 
     # Responsible for sending chat messages to IRC and Synchtube
-    # Only the $status command should send a chat message to Synchtube outside this thread
+    # Only the $status command and error messages should send a chat message to Synchtube or IRC outside this thread
     def _chatloop(self):
         while not self.closing.isSet():
             if self.muted:
