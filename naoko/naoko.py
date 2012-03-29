@@ -408,6 +408,9 @@ class SynchtubeClient(object):
         self._getConfig()
         self.thread = threading.currentThread()
         self.closeLock = threading.Lock()
+        # Since the video list can be accessed by two threads synchronization is necessary
+        # This is currently only used to make nextVideo() thread safe
+        self.vidLock = threading.Lock()
         self.thread.st = self
         self.leader_queue = deque()
         self.st_queue = deque()
@@ -612,7 +615,7 @@ class SynchtubeClient(object):
                 self.nextVideo()
                 time.sleep(0.05) # Sleep a bit, though yielding would be enough
                 continue
-            sleepTime = self.state.dur + (self.state.time / 1000) - time.time() + 2 # Add 2 seconds to make her less aggressive in switching
+            sleepTime = self.state.dur + (self.state.time / 1000) - time.time()
             if sleepTime < 0:
                 sleepTime = 0
             # If the video is paused, unpause it
@@ -625,7 +628,6 @@ class SynchtubeClient(object):
                 self.send("s", [1, unpause])
                 sleepTime = 60
             if self.state.state == 0:
-                time.sleep(2) # Sleep a bit to make sure people have time to load the new video
                 if not self.leading.isSet(): continue
                 self.send ("s", [1,0])
                 sleepTime = 60
@@ -680,7 +682,10 @@ class SynchtubeClient(object):
                                 "ban"               : self.ban,
                                 "skip"              : self.skip,
                                 "d"                 : self.dice,
-                                "dice"              : self.dice}
+                                "dice"              : self.dice,
+                                "bump"              : self.bump,
+                                "clean"             : self.cleanList,
+                                "duplicates"        : self.cleanDuplicates}
 
     def getUserByNick(self, nick):
         (valid, name) = self.filterString(nick, True)
@@ -692,6 +697,7 @@ class SynchtubeClient(object):
         except StopIteration: return -1
 
     def nextVideo(self):
+        self.vidLock.acquire()
         videoIndex = self.getVideoIndexById(self.state.current)
         if videoIndex == None:
             videoIndex = -1
@@ -707,6 +713,7 @@ class SynchtubeClient(object):
         self.state.time = int(round(time.time() * 1000))
         self.send("s", [2])
         self.send("pm", self.vidlist[videoIndex].v_sid)
+        self.vidLock.release()
 
     # Enqueues a message for sending to both IRC and Synchtube
     # This should not be used for bridging chat between IRC and Synchtube
@@ -751,6 +758,8 @@ class SynchtubeClient(object):
         self.asLeader(banUser)
 
     def changeMedia(self, tag, data):
+        self.state.current = None
+        self.playerAction.set()
         self.logger.info("Ignoring cm (change media) message: %s" % (data))
 
     def playlist(self, tag, data):
@@ -760,7 +769,7 @@ class SynchtubeClient(object):
 
     def changeState(self, tag, data):
         self.logger.debug("State is %s %s", tag, data)
-        if data is None:
+        if data == None:
             self.state.state = 0
             self.state.time = int(round(time.time() * 1000))
         else:
@@ -775,12 +784,12 @@ class SynchtubeClient(object):
         self.playerAction.set()
 
     def play(self, tag, data):
-        if self.leading.isSet() and (not self.state.previous is None) and (not self.getVideoIndexById(self.state.previous) is None):
+        if self.leading.isSet() and (not self.state.previous == None) and (not self.getVideoIndexById(self.state.previous) == None):
             self.send ("rm", self.state.previous)
         self.state.previous = None
         self.state.current = data [1]
         index = self.getVideoIndexById(self.state.current)
-        if index is None:
+        if index == None:
             self.sendMsg("Unexpected video, restarting")
             self.close()
             return
@@ -886,36 +895,6 @@ class SynchtubeClient(object):
         for u in data:
             self._addUser(u)
 
-    def kick(self, command, user, data):
-        if not user.mod: return
-        args = data.split(' ', 1)
-        target = self.getUserByNick(args[0])
-        if not target or target.mod: return
-        self.logger.info ("Kick Target %s Requestor %s", target, user)
-        if len(args) > 1:
-            def kickUser():
-                self._kickUser(target.sid, args[1], False)
-            self.asLeader(kickUser)
-        else:
-            def kickUser():
-                self._kickUser(target.sid, sendMessage=False)
-            self.asLeader(kickUser)
-
-    def ban(self, command, user, data):
-        if not user.mod: return
-        args = data.split(' ', 1)
-        target = self.getUserByNick(args[0])
-        if not target or target.mod: return
-        self.logger.info ("Ban Target %s Requestor %s", target, user)
-        if len(args) > 1:
-            def banUser():
-                self._banUser(target.sid, args[1], False)
-            self.asLeader(banUser)
-        else:
-            def banUser():
-                self._banUser(target.sid, sendMessage=False)
-            self.asLeader(banUser)
-
     def changeLeader(self, sid):
         if sid == self.leader_sid: return
         if sid == self.sid:
@@ -926,18 +905,6 @@ class SynchtubeClient(object):
         self.pendingToss = True
         self.tossLeader = tossLeader
         self.takeLeader()
-
-    def steal(self, command, user, data):
-        if not user.mod: return
-        self.changeLeader(user.sid)
-
-    def makeLeader(self, command, user, data):
-        if not user.mod: return
-        args = data.split(' ', 1)
-        target = self.getUserByNick(args[0])
-        self.logger.info ("Requested mod change to %s by %s", target, user)
-        if not target: return
-        self.changeLeader(target.sid)
 
     def skip(self, command, user, data):
         if not user.mod: return
@@ -964,7 +931,11 @@ class SynchtubeClient(object):
                     arg = ''
                 fn = self.commandHandlers[command]
             except KeyError:
-                self.logger.warn("No handler for %s [%s]", command, arg)
+                # Dice is a special case
+                if re.match(r"^[0-9]+d[0-9]+$", command):
+                    self.dice(command, user, " ".join(command.split('d')))
+                else:
+                    self.logger.warn("No handler for %s [%s]", command, arg)
             else:
                 fn(command, user, arg)
 
@@ -1013,6 +984,18 @@ class SynchtubeClient(object):
         if user.mod:
             self.muted = False
 
+    def steal(self, command, user, data):
+        if not user.mod: return
+        self.changeLeader(user.sid)
+
+    def makeLeader(self, command, user, data):
+        if not user.mod: return
+        args = data.split(' ', 1)
+        target = self.getUserByNick(args[0])
+        self.logger.info ("Requested mod change to %s by %s", target, user)
+        if not target: return
+        self.changeLeader(target.sid)
+
     def dice(self, command, user, data):
         if not data: return
         params = data
@@ -1040,6 +1023,62 @@ class SynchtubeClient(object):
             self.enqueueMsg("%dd%d: %d [%s]" % (num, size, sum, ",".join (output)))
         except Exception as e:
             self.logger.debug (e)
+
+    def bump(self, command, user, data):
+        if not user.mod: return
+        (valid, target) = self.filterString(data, True)
+        if target == "":
+            target = user.nick
+        target = target.lower()
+        videoIndex = self.getVideoIndexById(self.state.current)
+        i = len(self.vidlist) - 1
+        while i >= 0:
+            if self.vidlist[i].nick.lower() == target:
+                break
+            i -= 1
+        if i <= videoIndex: return
+        # The case where i == 0 requires no action
+        if i > 0:
+            output = dict()
+            output["id"] = self.vidlist[i].v_sid
+            if videoIndex >= 0:
+                output["after"] = self.vidlist[videoIndex].v_sid
+            def move():
+               self.send("mm", output)
+               self.moveMedia("mm", output)
+            self.asLeader(move)
+
+    # Cleans all the videos above the currently playing video
+    def cleanList(self, command, user, data):
+        if not user.mod: return
+        videoIndex = self.getVideoIndexById(self.state.current)
+        if videoIndex > 0:
+            self.logger.debug("Cleaning %d Videos", videoIndex)
+            def clean():
+                i = 0
+                while i < videoIndex:
+                   self.send("rm", self.vidlist[i].v_sid)
+                   i+=1
+            self.asLeader(clean)
+
+    # Clears any duplicate videos from the list
+    def cleanDuplicates(self, command, user, data):
+        if not user.mod: return
+        kill = []
+        vids = set()
+        i = 0
+        while i < len(self.vidlist):
+            key = "%s:%s" % (self.vidlist[i].vidinfo.site, self.vidlist[i].vidinfo.vid)
+            if key in vids and not self.vidlist[i].v_sid == self.state.current:
+                kill.append(self.vidlist[i].v_sid)
+            else:
+                vids.add(key)
+            i += 1
+        if len(kill) > 0:
+            def clean():
+                for x in kill:
+                    self.send("rm", x)
+            self.asLeader(clean)
 
     def lock (self, command, user, data):
         if not user.mod: return
@@ -1094,12 +1133,42 @@ class SynchtubeClient(object):
         if len (question) == 0: return
         self.enqueueMsg("[8ball %s] %s" % (user.nick, random.choice(eight_choices)))
 
+    def kick(self, command, user, data):
+        if not user.mod: return
+        args = data.split(' ', 1)
+        target = self.getUserByNick(args[0])
+        if not target or target.mod: return
+        self.logger.info ("Kick Target %s Requestor %s", target, user)
+        if len(args) > 1:
+            def kickUser():
+                self._kickUser(target.sid, args[1], False)
+            self.asLeader(kickUser)
+        else:
+            def kickUser():
+                self._kickUser(target.sid, sendMessage=False)
+            self.asLeader(kickUser)
+
+    def ban(self, command, user, data):
+        if not user.mod: return
+        args = data.split(' ', 1)
+        target = self.getUserByNick(args[0])
+        if not target or target.mod: return
+        self.logger.info ("Ban Target %s Requestor %s", target, user)
+        if len(args) > 1:
+            def banUser():
+                self._banUser(target.sid, args[1], False)
+            self.asLeader(banUser)
+        else:
+            def banUser():
+                self._banUser(target.sid, sendMessage=False)
+            self.asLeader(banUser)
+
     # Filters a string, removing invalid characters
     # Used to sanitize nicks or video titles for printing
     # Returns a boolean describing whether invalid characters were found
     # As well as the filtered string
     def filterString(self, input, isNick=False):
-        if not input: return (False, "")
+        if input == None: return (False, "")
         output = []
         value = input
         if type (value) is not str and type(value) is not unicode:
@@ -1134,6 +1203,8 @@ class SynchtubeClient(object):
 
     # Add the video described by v
     def _addVideo(self, v):
+        if self.stthread != threading.currentThread():
+            raise Exception("_addVideo should not be called outside the SynchtubeClient thread")
         v[0] = v[0][:len(SynchtubeVidInfo._fields)]
         (valid, title) = self.filterString(v[0][2])
         v[0][2] = title
@@ -1143,19 +1214,29 @@ class SynchtubeClient(object):
         (valid, name) = self.filterString(v[3], True)
         v[3] = name
         vid = SynchtubeVideo(*v)
+        self.vidLock.acquire()
         self.vidlist.append(vid)
+        self.vidLock.release()
 
     def _removeVideo(self, v):
+        if self.stthread != threading.currentThread():
+            raise Exception("_removeVideo should not be called outside the SynchtubeClient thread")
         idx = self.getVideoIndexById (v)
         if idx >= 0:
+            self.vidLock.acquire()
             self.vidlist.pop(idx)
+            self.vidLock.release()
 
     def _moveVideo(self, v, after=None):
+        if self.stthread != threading.currentThread():
+            raise Exception("_moveVideo should not be called outside the SynchtubeClient thread")
+        self.vidLock.acquire()
         video = self.vidlist.pop(self.getVideoIndexById(v))
         pos = 0
         if after:
             pos = self.getVideoIndexById(after) + 1
         self.vidlist.insert(pos, video)
+        self.vidLock.release()
         self.logger.debug ("Inserted %s after %s", video, self.vidlist[pos - 1])
 
     # Kick user using their sid(session id)
