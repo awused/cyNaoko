@@ -753,98 +753,6 @@ class SynchtubeClient(object):
     def changeMedia(self, tag, data):
         self.logger.info("Ignoring cm (change media) message: %s" % (data))
 
-    def mute(self, command, user, data):
-        if user.mod:
-            self.muted = True
-
-    # TODO -- make commands like $8d6 work
-    def dice(self, command, user, data):
-        if not data: return
-        params = data
-        if type (params) is not str and type(params) is not unicode:
-            params = str(params)
-        params = params.strip().split()
-        if len (params) < 2: return
-        #if (not params[0].isdigit()) or (not params[1].isdigit()): return
-        num = 0
-        size = 0
-        try:
-            num = int(params[0])
-            size = int (params[1])
-            if num < 1 or size < 1 or num > 1000 or size > 1000: return # Limits
-            # TODO - do something smarter than rolling each die
-            sum = 0
-            i = 0
-            output = []
-            while i < num:
-                rand = random.randint (1, size)
-                if i < 5:
-                    output.append(str(rand))
-                if i == 5:
-                    output.append("...")
-                sum = sum + rand
-                i = i+1
-            self.enqueueMsg("%dd%d: %d [%s]" % (num, size, sum, ",".join (output)))
-        except Exception as e:
-            self.logger.debug (e)
-
-    def unmute (self, command, user, data):
-        if user.mod:
-            self.muted = False
-
-    def lock (self, command, user, data):
-        if not user.mod: return
-        def changeLock():
-            self.send ("lock?", True)
-        self.asLeader(changeLock)
-
-    def unlock (self, command, user, data):
-        if not user.mod: return
-        def changeLock():
-            self.send ("lock?", False)
-        self.asLeader(changeLock)
-
-    def status (self, command, user, data):
-        msg = "Status = ["
-        if not self.muted:
-            msg += "Not "
-        msg += "Muted]"
-        self.sendChat(msg)
-
-    def restart(self, command, user, data):
-        if user.mod:
-            self.close()
-
-    def choose(self, command, user, data):
-        if not data: return
-        choices = data
-        if type (choices) is not str and type(choices) is not unicode:
-            choices = str(choices)
-        choices = choices.strip()
-        if len (choices) == 0: return
-        self.enqueueMsg("[Choose: %s] %s" % (choices, random.choice(choices.split())))
-
-    def steak(self, command, user, data):
-        self.enqueueMsg("There is no steak.")
-
-    def ask(self, command, user, data):
-        if not data: return
-        question = data
-        if type (question) is not str and type(question) is not unicode:
-            question = str(question)
-        question = question.strip()
-        if len (question) == 0: return
-        self.enqueueMsg("[%s] %s" % (question, random.choice(["Yes", "No"])))
-
-    def eightBall(self, command, user, data):
-        if not data: return
-        question = data
-        if type (question) is not str and type(question) is not unicode:
-            question = str(question)
-        question = question.strip()
-        if len (question) == 0: return
-        self.enqueueMsg("[8ball %s] %s" % (user.nick, random.choice(eight_choices)))
-
     def playlist(self, tag, data):
         for v in data:
             self._addVideo(v)
@@ -1091,6 +999,100 @@ class SynchtubeClient(object):
         else:
             self.leading.clear()
         self.logger.debug("Leader is %s", self.userlist[data])
+
+    # Command handlers for commands that users can type in Synchtube chat
+    # All of them receive input in the form (command, user, data)
+    # Where command is the typed command, user is the user who sent the message
+    # and data is everything following the command in the chat message
+
+    def mute(self, command, user, data):
+        if user.mod:
+            self.muted = True
+
+    def unmute (self, command, user, data):
+        if user.mod:
+            self.muted = False
+
+    def dice(self, command, user, data):
+        if not data: return
+        params = data
+        if type (params) is not str and type(params) is not unicode:
+            params = str(params)
+        params = params.strip().split(' ')
+        if len (params) < 2: return
+        num = 0
+        size = 0
+        try:
+            num = int(params[0])
+            size = int (params[1])
+            if num < 1 or size < 1 or num > 1000 or size > 1000: return # Limits
+            sum = 0
+            i = 0
+            output = []
+            while i < num:
+                rand = random.randint (1, size)
+                if i < 5:
+                    output.append(str(rand))
+                if i == 5:
+                    output.append("...")
+                sum = sum + rand
+                i = i+1
+            self.enqueueMsg("%dd%d: %d [%s]" % (num, size, sum, ",".join (output)))
+        except Exception as e:
+            self.logger.debug (e)
+
+    def lock (self, command, user, data):
+        if not user.mod: return
+        def changeLock():
+            self.send ("lock?", True)
+        self.asLeader(changeLock)
+
+    def unlock (self, command, user, data):
+        if not user.mod: return
+        def changeLock():
+            self.send ("lock?", False)
+        self.asLeader(changeLock)
+
+    def status (self, command, user, data):
+        msg = "Status = ["
+        if not self.muted:
+            msg += "Not "
+        msg += "Muted]"
+        self.sendChat(msg)
+
+    def restart(self, command, user, data):
+        if user.mod:
+            self.close()
+
+    def choose(self, command, user, data):
+        if not data: return
+        choices = data
+        if type (choices) is not str and type(choices) is not unicode:
+            choices = str(choices)
+        choices = choices.strip()
+        if len (choices) == 0: return
+        self.enqueueMsg("[Choose: %s] %s" % (choices, random.choice(choices.split(' '))))
+
+    def steak(self, command, user, data):
+        self.enqueueMsg("There is no steak.")
+
+    def ask(self, command, user, data):
+        if not data: return
+        question = data
+        if type (question) is not str and type(question) is not unicode:
+            question = str(question)
+        question = question.strip()
+        if len (question) == 0: return
+        self.enqueueMsg("[%s] %s" % (question, random.choice(["Yes", "No"])))
+
+    def eightBall(self, command, user, data):
+        if not data: return
+        question = data
+        if type (question) is not str and type(question) is not unicode:
+            question = str(question)
+        question = question.strip()
+        if len (question) == 0: return
+        self.enqueueMsg("[8ball %s] %s" % (user.nick, random.choice(eight_choices)))
 
     # Filters a string, removing invalid characters
     # Used to sanitize nicks or video titles for printing
