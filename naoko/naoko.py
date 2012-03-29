@@ -1024,6 +1024,8 @@ class SynchtubeClient(object):
         except Exception as e:
             self.logger.debug (e)
 
+    # Bumps the last video added by the specificied user
+    # If no name is provided it bumps the last video by the user who sent the command
     def bump(self, command, user, data):
         if not user.mod: return
         (valid, target) = self.filterString(data, True)
@@ -1069,8 +1071,9 @@ class SynchtubeClient(object):
         i = 0
         while i < len(self.vidlist):
             key = "%s:%s" % (self.vidlist[i].vidinfo.site, self.vidlist[i].vidinfo.vid)
-            if key in vids and not self.vidlist[i].v_sid == self.state.current:
-                kill.append(self.vidlist[i].v_sid)
+            if key in vids:
+                if not self.vidlist[i].v_sid == self.state.current:
+                    kill.append(self.vidlist[i].v_sid)
             else:
                 vids.add(key)
             i += 1
