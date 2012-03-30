@@ -377,6 +377,8 @@ class IRCClient(object):
 
     def recvMessage (self):
         frame = self.sock.recv(2048)
+        if len(frame) == 0:
+            raise Exception("IRC Socket closed")
         frame = frame.strip("\n\r")
         self.logger.debug ("Received IRC Frame %s", frame)
         return frame
@@ -501,6 +503,7 @@ class SynchtubeClient(object):
         # Is not triggered when she is going to give the leader position back or turn tv mode back on
         self.leading = threading.Event()
         self.irc_queue = deque(maxlen=0)
+        self.sql_queue = deque(maxlen=0)
 
         self.chatthread = threading.Thread (target=SynchtubeClient._chatloop, args=[self])
         self.chatthread.start()
@@ -515,6 +518,10 @@ class SynchtubeClient(object):
             self.ircthread = threading.Thread(target=SynchtubeClient._ircloop, args=[self])
             self.ircthread.start()
 
+        if self.dbfile:
+            self.sqlthread = threading.Thread(target=SynchtubeClient._sqlloop, args=[self])
+            self.sqlthread.start()
+
         while not self.closing.wait(5):
             # Sleeping first lets everything get initialized
             # The parent process will wait
@@ -524,6 +531,7 @@ class SynchtubeClient(object):
                 status = status and self.chatthread.isAlive()
                 # Catch the case where the client is still connecting after 5 seconds
                 status = status and (not self.client.heartBeatEvent or self.client.hbthread.isAlive())
+                status = status and (not self.dbfile or self.sqlthread.isAlive())
                 status = status and self.playthread.isAlive()
             except Exception as e:
                 self.logger.error (e)
@@ -607,15 +615,14 @@ class SynchtubeClient(object):
 
     # Responsible for handling playback
     def _playloop(self):
-        while True:
-            self.leading.wait()
+        while self.leading.wait():
             if self.closing.isSet(): break
             if not self.state.current:
                 self.enqueueMsg("Unknown video playing, skipping")
                 self.nextVideo()
                 time.sleep(0.05) # Sleep a bit, though yielding would be enough
                 continue
-            sleepTime = self.state.dur + (self.state.time / 1000) - time.time()
+            sleepTime = self.state.dur + (self.state.time / 1000) - time.time() + 1.5 # Add 1.5 seconds to give people time to finish
             if sleepTime < 0:
                 sleepTime = 0
             # If the video is paused, unpause it
@@ -638,6 +645,13 @@ class SynchtubeClient(object):
                 self.nextVideo()
             self.playerAction.clear()
         self.logger.info("Playback Loop Closed")
+
+    def _sqlloop(self):
+        self.sql_queue = deque()
+        self.sqlclient = client = NaokoDB(self.dbfile, self.dbscript)
+        while self.sqlAction.wait():
+            if self.closing.isSet(): break
+        self.logger.info("SQL Loop Closed")
 
     def _initHandlers(self):
         self.handlers = {"<"                : self.chat,
@@ -731,6 +745,8 @@ class SynchtubeClient(object):
         self.client.close()
         self.leading.set()
         self.playerAction.set()
+        if self.dbfile:
+            self.sqlAction.set()
         if self.irc_nick:
             self.ircclient.close()
 
@@ -1021,7 +1037,7 @@ class SynchtubeClient(object):
                 sum = sum + rand
                 i = i+1
             self.enqueueMsg("%dd%d: %d [%s]" % (num, size, sum, ",".join (output)))
-        except Exception as e:
+        except (TypeError, ValueError) as e:
             self.logger.debug (e)
 
     # Bumps the last video added by the specificied user
@@ -1288,3 +1304,5 @@ class SynchtubeClient(object):
         self.channel = config.get('naoko', 'irc_channel')
         self.irc_nick = config.get('naoko', 'irc_nick')
         self.ircpw = config.get('naoko', 'irc_pass')
+        self.dbfile = config.get('naoko', 'db_file')
+        self.dbinit = config.get('naoko', 'db_init')

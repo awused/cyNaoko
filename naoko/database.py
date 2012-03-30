@@ -101,7 +101,7 @@ class NaokoDB(object):
 
       if not self._required_tables <= tables:
          raise ValueError("Database '%s' is non-empty but "
-                          "does not pyoovide required tables %s" %
+                          "does not provide required tables %s" %
                           (database, self._required_tables - tables))
 
 
@@ -271,6 +271,7 @@ if __name__ == '__main__':
       with db.cursor() as cur:
          print "**Inserting videos into database: %s" % (vids)
          cur.executemany("INSERT INTO videos VALUES(?, ?, ?, ?)", vids)
+         cur.executemany("INSERT OR IGNORE INTO videos VALUES(?, ?, ?, ?)", vids)
          cur.execute("SELECT * FROM videos ORDER BY id")
          row = cur.fetchone()
          while row:
