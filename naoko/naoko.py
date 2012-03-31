@@ -1175,11 +1175,11 @@ class SynchtubeClient(object):
         self.logger.info ("Ban Target %s Requestor %s", target, user)
         if len(args) > 1:
             def banUser():
-                self._banUser(target.sid, args[1], False)
+                self._banUser(target.sid, args[1])
             self.asLeader(banUser)
         else:
             def banUser():
-                self._banUser(target.sid, sendMessage=False)
+                self._banUser(target.sid)
             self.asLeader(banUser)
 
     # Filters a string, removing invalid characters
