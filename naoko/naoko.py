@@ -26,6 +26,7 @@ import ConfigParser
 import random
 
 from settings import *
+from database import NaokoDB
 
 eight_choices = [
     "It is certain",
@@ -650,7 +651,7 @@ class SynchtubeClient(object):
 
     def _sqlloop(self):
         self.sql_queue = deque()
-        self.sqlclient = client = NaokoDB(self.dbfile, self.dbscript)
+        self.sqlclient = client = NaokoDB(self.dbfile, self.dbinit)
         while self.sqlAction.wait():
             if self.closing.isSet(): break
         self.logger.info("SQL Loop Closed")
