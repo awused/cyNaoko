@@ -499,6 +499,8 @@ class SynchtubeClient(object):
         self.closing = threading.Event()
         # Tracks when she needs to update her playback status
         self.playerAction = threading.Event()
+        # Tracks when there is an sql action
+        self.sqlAction = threading.Event()
         # Tracks whether she is leading
         # Is not triggered when she is going to give the leader position back or turn tv mode back on
         self.leading = threading.Event()
