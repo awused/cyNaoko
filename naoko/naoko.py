@@ -617,14 +617,14 @@ class SynchtubeClient(object):
     def _playloop(self):
         while self.leading.wait():
             if self.closing.isSet(): break
-            if not self.state.current:
-                self.enqueueMsg("Unknown video playing, skipping")
-                self.nextVideo()
-                time.sleep(0.05) # Sleep a bit, though yielding would be enough
-                continue
             sleepTime = self.state.dur + (self.state.time / 1000) - time.time() + 1.5 # Add 1.5 seconds to give people time to finish
             if sleepTime < 0:
                 sleepTime = 0
+            if not self.state.current:
+                self.enqueueMsg("Unknown video playing, skipping")
+                self.nextVideo()
+                self.state.state = -1
+                sleepTime = 60
             # If the video is paused, unpause it
             if self.state.state == 2:
                 unpause = 0
@@ -980,8 +980,9 @@ class SynchtubeClient(object):
     def leader(self, tag, data):
         self.leader_sid = data
         if self.leader_sid == self.sid:
+            toss = self.pendingToss
             self._leaderActions()
-            if not self.pendingToss:
+            if not toss:
                 self.leading.set()
         else:
             self.leading.clear()
