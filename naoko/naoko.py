@@ -621,7 +621,7 @@ class SynchtubeClient(object):
     def _playloop(self):
         while self.leading.wait():
             if self.closing.isSet(): break
-            sleepTime = self.state.dur + (self.state.time / 1000) - time.time() + 1.5 # Add 1.5 seconds to give people time to finish
+            sleepTime = self.state.dur + (self.state.time / 1000) - time.time() + 0.5 # Add half a second to give people time to finish
             if sleepTime < 0:
                 sleepTime = 0
             if not self.state.current:
