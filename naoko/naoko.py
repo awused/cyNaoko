@@ -499,8 +499,9 @@ class SynchtubeClient(object):
         self.thread.close = self.close
         self.closing = threading.Event()
         # Tracks when she needs to update her playback status
+        # This is used to interrupt her timer as she is waiting for the end of a video
         self.playerAction = threading.Event()
-        # Tracks when there is an sql action
+        # Prevents the SQL thread from busy-waiting
         self.sqlAction = threading.Event()
         # Tracks whether she is leading
         # Is not triggered when she is going to give the leader position back or turn tv mode back on
@@ -705,7 +706,7 @@ class SynchtubeClient(object):
                                 "duplicates"        : self.cleanDuplicates}
 
     def getUserByNick(self, nick):
-        (valid, name) = self.filterString(nick, True)
+        name = self.filterString(nick, True)[1]
         try: return self.userlist[(i for i in self.userlist if self.userlist[i].nick.lower() == name.lower()).next()]
         except StopIteration: return None
 
@@ -730,6 +731,7 @@ class SynchtubeClient(object):
         self.state.time = int(round(time.time() * 1000))
         self.send("s", [2])
         self.send("pm", self.vidlist[videoIndex].v_sid)
+        self.enqueueMsg("Playing: %s" % (self.filterString(self.vidlist[videoIndex].vidinfo.title)[1]))
         self.vidLock.release()
 
     # Enqueues a message for sending to both IRC and Synchtube
@@ -1217,8 +1219,7 @@ class SynchtubeClient(object):
     def _addUser(self, u_arr):
         userinfo = itertools.izip_longest(SynchtubeUser._fields, u_arr)
         userinfo = dict(userinfo)
-        (valid, nick) = self.filterString(userinfo['nick'], True)
-        userinfo['nick'] = nick
+        userinfo['nick'] = self.filterString(userinfo['nick'], True)[1]
         userinfo['msgs'] = deque(maxlen=3)
         userinfo['nickChange'] = False
         user = SynchtubeUser(**userinfo)
@@ -1229,13 +1230,11 @@ class SynchtubeClient(object):
         if self.stthread != threading.currentThread():
             raise Exception("_addVideo should not be called outside the SynchtubeClient thread")
         v[0] = v[0][:len(SynchtubeVidInfo._fields)]
-        (valid, title) = self.filterString(v[0][2])
-        v[0][2] = title
+        v[0][2] = self.filterString(v[0][2])[1]
         v[0] = SynchtubeVidInfo(*v[0])
         v.append(None) # If an unregistered adds a video there is no name included
         v = v[:len(SynchtubeVideo._fields)]
-        (valid, name) = self.filterString(v[3], True)
-        v[3] = name
+        v[3] = self.filterString(v[3], True)[1]
         vid = SynchtubeVideo(*v)
         self.vidLock.acquire()
         self.vidlist.append(vid)
