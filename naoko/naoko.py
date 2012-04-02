@@ -651,8 +651,11 @@ class SynchtubeClient(object):
         self.logger.info("Playback Loop Closed")
 
     def _sqlloop(self):
+        initscript=None
+        if self.dbinit:
+            initscript=open(self.dbinit).read()
         self.sql_queue = deque()
-        self.sqlclient = client = NaokoDB(self.dbfile, self.dbinit)
+        self.sqlclient = client = NaokoDB(self.dbfile, initscript)
         while self.sqlAction.wait():
             if self.closing.isSet(): break
         self.logger.info("SQL Loop Closed")
