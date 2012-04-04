@@ -466,7 +466,6 @@ class SynchtubeClient(object):
         self.port          = getHiddenValue("room_dest_port")
         self.st_build      = getHiddenValue("st_build")
         self.userid        = getHiddenValue("room_userid")
-        print "** USERID **\n%s" % self.userid
 
         config_url = "http://www.synchtube.com/api/1/room/%s" % (self.room)
         config_info = urllib.urlopen(config_url).read()
