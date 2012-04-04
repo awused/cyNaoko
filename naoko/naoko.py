@@ -657,7 +657,7 @@ class SynchtubeClient(object):
             initscript=open(self.dbinit).read()
         self.sql_queue = deque()
         self.dbclient = client = NaokoDB(self.dbfile, initscript)
-        #self.dbcursor = client.cursor()
+        self.last_random = time.time()
         self.sql_queue = deque()
         while self.sqlAction.wait():
             if self.closing.isSet(): break
@@ -1118,6 +1118,7 @@ class SynchtubeClient(object):
 
     # Adds random videos from the database
     def addRandom(self, command, user, data):
+        if not (user.mod or len(self.vidlist) <= 10): return
         num = None
         try:
             num = int(data)
@@ -1276,6 +1277,9 @@ class SynchtubeClient(object):
         self.dbclient.execute("INSERT INTO video_stats VALUES(?, ?, ?)", (vi.site, vi.vid, v.nick))
 
     def _addRandom(self, num):
+        # Limit to once every 5 seconds
+        if time.time() - self.last_random < 5: return
+        self.last_random = time.time()
         self.logger.debug ("Adding %d randomly selected videos", num)
         vids = self.dbclient.getVideos(num, ['type', 'id', 'title', 'duration_ms'], ('RANDOM()',))
         self.logger.debug ("Retrieved %s", vids)
