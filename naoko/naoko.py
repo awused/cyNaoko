@@ -465,6 +465,7 @@ class SynchtubeClient(object):
         self.port          = getHiddenValue("room_dest_port")
         self.st_build      = getHiddenValue("st_build")
         self.userid        = getHiddenValue("room_userid")
+        print "** USERID **\n%s" % self.userid
 
         config_url = "http://www.synchtube.com/api/1/room/%s" % (self.room)
         config_info = urllib.urlopen(config_url).read()
@@ -655,9 +656,14 @@ class SynchtubeClient(object):
         if self.dbinit:
             initscript=open(self.dbinit).read()
         self.sql_queue = deque()
-        self.sqlclient = client = NaokoDB(self.dbfile, initscript)
+        self.dbclient = client = NaokoDB(self.dbfile, initscript)
+        #self.dbcursor = client.cursor()
+        self.sql_queue = deque()
         while self.sqlAction.wait():
             if self.closing.isSet(): break
+            self.sqlAction.clear()
+            while len(self.sql_queue) > 0:
+                self.sql_queue.popleft()()
         self.logger.info("SQL Loop Closed")
 
     def _initHandlers(self):
@@ -706,7 +712,9 @@ class SynchtubeClient(object):
                                 "dice"              : self.dice,
                                 "bump"              : self.bump,
                                 "clean"             : self.cleanList,
-                                "duplicates"        : self.cleanDuplicates}
+                                "duplicates"        : self.cleanDuplicates,
+                                "delete"            : self.delete,
+                                "addrandom"         : self.addRandom}
 
     def getUserByNick(self, nick):
         name = self.filterString(nick, True)[1]
@@ -788,7 +796,7 @@ class SynchtubeClient(object):
 
     def playlist(self, tag, data):
         for v in data:
-            self._addVideo(v)
+            self._addVideo(v, False)
         #self.logger.debug(pprint(self.vidlist))
 
     def changeState(self, tag, data):
@@ -947,7 +955,7 @@ class SynchtubeClient(object):
 
         if len(msg) > 0 and msg[0] == '$':
             line = msg[1:].split(' ', 1)
-            command = line [0]
+            command = line [0].lower()
             try:
                 if len(line) > 1:
                     arg = line[1].strip()
@@ -1026,7 +1034,7 @@ class SynchtubeClient(object):
         params = data
         if type (params) is not str and type(params) is not unicode:
             params = str(params)
-        params = params.strip().split(' ')
+        params = params.strip().split()
         if len (params) < 2: return
         num = 0
         size = 0
@@ -1108,6 +1116,39 @@ class SynchtubeClient(object):
                     self.send("rm", x)
             self.asLeader(clean)
 
+    # Adds random videos from the database
+    def addRandom(self, command, user, data):
+        num = None
+        try:
+            num = int(data)
+        except (TypeError, ValueError) as e:
+            self.logger.debug (e)
+        if num is None:
+            num = 5
+        if num > 20 or (not user.mod and num > 5): return
+        def add():
+            self._addRandom(num)
+        self.sql_queue.append(add)
+        self.sqlAction.set()
+
+    # Deletes the last video added by the provided user
+    def delete(self, command, user, data):
+        (valid, target) = self.filterString(data, True)
+        if not user.mod or target == "":
+            target = user.nick
+        target = target.lower()
+        videoIndex = self.getVideoIndexById(self.state.current)
+        i = len(self.vidlist) - 1
+        while i >= 0:
+            if self.vidlist[i].nick.lower() == target:
+                break
+            i -= 1
+        if i <= videoIndex: return
+        if i >= 0:
+            def clean():
+               self.send("rm", self.vidlist[i].v_sid)
+            self.asLeader(clean)
+
     def lock (self, command, user, data):
         if not user.mod: return
         def changeLock():
@@ -1138,7 +1179,7 @@ class SynchtubeClient(object):
             choices = str(choices)
         choices = choices.strip()
         if len (choices) == 0: return
-        self.enqueueMsg("[Choose: %s] %s" % (choices, random.choice(choices.split(' '))))
+        self.enqueueMsg("[Choose: %s] %s" % (choices, random.choice(choices.split())))
 
     def steak(self, command, user, data):
         self.enqueueMsg("There is no steak.")
@@ -1228,8 +1269,21 @@ class SynchtubeClient(object):
         user = SynchtubeUser(**userinfo)
         self.userlist[user.sid] = user
 
+    def _sqlInsertVideo(self, v):
+        if str(v.uid) == self.userid: return
+        vi = v.vidinfo
+        self.dbclient.execute("INSERT OR IGNORE INTO videos VALUES(?, ?, ?, ?)", (vi.site, vi.vid, vi.dur * 1000, vi.title))
+        self.dbclient.execute("INSERT INTO video_stats VALUES(?, ?, ?)", (vi.site, vi.vid, v.nick))
+
+    def _addRandom(self, num):
+        self.logger.debug ("Adding %d randomly selected videos", num)
+        vids = self.dbclient.getVideos(num, ['type', 'id', 'title', 'duration_ms'], ('RANDOM()',))
+        self.logger.debug ("Retrieved %s", vids)
+        for v in vids:
+            self.send ("am", [v[0], v[1], v[2],"http://i.ytimg.com/vi/%s/default.jpg" % (v[1]), v[3]])
+
     # Add the video described by v
-    def _addVideo(self, v):
+    def _addVideo(self, v, sql=True):
         if self.stthread != threading.currentThread():
             raise Exception("_addVideo should not be called outside the SynchtubeClient thread")
         v[0] = v[0][:len(SynchtubeVidInfo._fields)]
@@ -1242,6 +1296,11 @@ class SynchtubeClient(object):
         self.vidLock.acquire()
         self.vidlist.append(vid)
         self.vidLock.release()
+        if sql:
+            def insert():
+                self._sqlInsertVideo(vid)
+            self.sql_queue.append(insert)
+            self.sqlAction.set()
 
     def _removeVideo(self, v):
         if self.stthread != threading.currentThread():
