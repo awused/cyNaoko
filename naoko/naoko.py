@@ -24,6 +24,7 @@ from urllib2 import Request, urlopen
 from collections import namedtuple, deque
 import ConfigParser
 import random
+from datetime import datetime
 
 from settings import *
 from database import NaokoDB
@@ -622,7 +623,7 @@ class SynchtubeClient(object):
     def _playloop(self):
         while self.leading.wait():
             if self.closing.isSet(): break
-            sleepTime = self.state.dur + (self.state.time / 1000) - time.time()
+            sleepTime = self.state.dur + (self.state.time / 1000) - time.time() + 1
             if sleepTime < 0:
                 sleepTime = 0
             if not self.state.current:
@@ -714,6 +715,7 @@ class SynchtubeClient(object):
                                 "clean"             : self.cleanList,
                                 "duplicates"        : self.cleanDuplicates,
                                 "delete"            : self.delete,
+                                "lastbans"          : self.lastBans,
                                 "addrandom"         : self.addRandom}
 
     def getUserByNick(self, nick):
@@ -1131,6 +1133,26 @@ class SynchtubeClient(object):
             self._addRandom(num)
         self.sql_queue.append(add)
         self.sqlAction.set()
+    
+    # Retrieve the latest bans for the specified user
+    def lastBans(self, command, user, data):
+        params = data.split()
+        target = user.nick
+        if len(params) > 0 and user.mod:
+            target = params[0]
+        num = None
+        if len(params) > 1:
+            try:
+                num = int(params[1])
+            except (TypeError, ValueError) as e:
+                self.logger.debug (e)
+        if num is None:
+            num = 3
+        if num > 5 or num < 1: return
+        def fetchBans():
+            self._lastBans(target, num)
+        self.sql_queue.append(fetchBans)
+        self.sqlAction.set()
 
     # Deletes the last video added by the provided user
     def delete(self, command, user, data):
@@ -1276,6 +1298,24 @@ class SynchtubeClient(object):
         self.dbclient.execute("INSERT OR IGNORE INTO videos VALUES(?, ?, ?, ?)", (vi.site, vi.vid, vi.dur * 1000, vi.title))
         self.dbclient.execute("INSERT INTO video_stats VALUES(?, ?, ?)", (vi.site, vi.vid, v.nick))
 
+    def _sqlInsertBan(self, user, reason, time):
+        auth = 0
+        if user.auth:
+            auth = 1
+        self.dbclient.execute("INSERT INTO bans VALUES(?, ?, ?, ?)", (reason, auth, user.nick, int(round(time*1000))))
+
+    def _lastBans(self, nick, num):
+        rows = self.dbclient.fetch("SELECT timestamp, reason FROM bans WHERE uname = ? COLLATE NOCASE ORDER BY timestamp DESC LIMIT ?", (nick, num))
+        if len (rows) == 0:
+            self.enqueueMsg("No recorded bans for %s" % nick)
+            return
+        if num > 1:
+            self.enqueueMsg("Last %d bans for user %s:" % (num, nick))
+        else:
+            self.enqueueMsg("Last ban for user %s:" % (nick))
+        for r in rows:
+            self.enqueueMsg("%s - %s" % (datetime.fromtimestamp(r[0] / 1000).isoformat(' '), r[1]))
+
     def _addRandom(self, num):
         # Limit to once every 5 seconds
         if time.time() - self.last_random < 5: return
@@ -1339,6 +1379,10 @@ class SynchtubeClient(object):
         if sendMessage:
             self.enqueueMsg("Banned %s: (%s)" % (self.userlist[sid].nick, reason))
         self.send("ban", sid)
+        def insert():
+            self._sqlInsertBan(self.userlist[sid], reason, time.time())
+        self.sql_queue.append(insert)
+        self.sqlAction.set()
 
     # Perform pending pending leader actions.
     # This should _NOT_ be called outside the main SynchtubeClient's thread

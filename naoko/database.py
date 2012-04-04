@@ -155,6 +155,19 @@ class NaokoDB(object):
         self.con.commit()
         return cur
 
+    @dbopen
+    def fetch(self, stmt, *args):
+        """
+        Opens a cursor using .cursor and executes stmt.
+
+        stmt must be a select statement
+
+        Returns the fetched rows.
+        """
+        cur = self.cursor()
+        cur.execute(stmt, *args)
+        return cur.fetchall()
+
     def close(self):
         """
         Closes the associated sqlite3 connection.
