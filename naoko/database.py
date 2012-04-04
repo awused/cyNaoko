@@ -162,7 +162,7 @@ class NaokoDB(object):
         self.__exit__(None, None, None)
 
 
-   # Higher level video/poll/chat-related APIs
+    # Higher level video/poll/chat-related APIs
     def getVideos(self, num=None, columns=None, orderby=None):
         """
         Retrieves videos from the video_stats table of Naoko's database.
@@ -196,11 +196,10 @@ class NaokoDB(object):
         # Canonicalize references to columns
         col_repl = {'id'   : 'v.id',
                     'type' : 'v.type'}
-        #  = legal_cols.intersection(columns)
+
         sel_cols = []
         for col in columns:
             sel_col = col
-            #if not col in legal_cols: continue
             if col in col_repl:
                 sel_col = col_repl[col]
             sel_cols.append(sel_col)
@@ -284,7 +283,7 @@ if __name__ == '__main__':
             print "**Inserting video stats into database: %s" % (inserts)
             cur.executemany("INSERT INTO video_stats VALUES(?, ?, ?)", inserts)
 
-      # Lets run some quick sanity queries
+        # Lets run some quick sanity queries
         with db.cursor() as cur:
             cur.execute("SELECT * FROM video_stats")
             rows = cur.fetchall()
