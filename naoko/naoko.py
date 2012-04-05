@@ -690,6 +690,7 @@ class SynchtubeClient(object):
                          "mm"               : self.moveMedia,
                          "s"                : self.changeState,
                          "playlist"         : self.playlist,
+                         "shuffle"          : self.shuffle,
                          "initdone"         : self.ignore}
 
     def _initCommandHandlers(self):
@@ -799,6 +800,15 @@ class SynchtubeClient(object):
         for v in data:
             self._addVideo(v, False)
         #self.logger.debug(pprint(self.vidlist))
+
+    def shuffle(self, tag, data):
+        newlist = []
+        # Sloppy O(n^2) algorithm, but the list is never too huge and it doesn't require a lock on the list
+        for v in data:
+            newlist.append(self.vidlist[self.getVideoIndexById(v)])
+        self.vidLock.acquire()
+        self.vidlist = newlist
+        self.vidLock.release()
 
     def changeState(self, tag, data):
         self.logger.debug("State is %s %s", tag, data)
