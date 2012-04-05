@@ -4,7 +4,7 @@
 import logging
 
 # Default Timeout.
-TIMEOUT   = 25
+TIMEOUT   = 30
 
 #Logging Level
 logLevel = logging.DEBUG
