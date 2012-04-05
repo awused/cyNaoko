@@ -1296,12 +1296,14 @@ class SynchtubeClient(object):
         vi = v.vidinfo
         self.dbclient.execute("INSERT OR IGNORE INTO videos VALUES(?, ?, ?, ?)", (vi.site, vi.vid, vi.dur * 1000, vi.title))
         self.dbclient.execute("INSERT INTO video_stats VALUES(?, ?, ?)", (vi.site, vi.vid, v.nick))
+        self.dbclient.commit()
 
     def _sqlInsertBan(self, user, reason, time):
         auth = 0
         if user.auth:
             auth = 1
         self.dbclient.execute("INSERT INTO bans VALUES(?, ?, ?, ?)", (reason, auth, user.nick, int(round(time*1000))))
+        self.dbclient.commit()
 
     def _lastBans(self, nick, num):
         rows = self.dbclient.fetch("SELECT timestamp, reason FROM bans WHERE uname = ? COLLATE NOCASE ORDER BY timestamp DESC LIMIT ?", (nick, num))
@@ -1323,7 +1325,7 @@ class SynchtubeClient(object):
         vids = self.dbclient.getVideos(num, ['type', 'id', 'title', 'duration_ms'], ('RANDOM()',))
         self.logger.debug ("Retrieved %s", vids)
         for v in vids:
-            self.send ("am", [v[0], v[1], v[2],"http://i.ytimg.com/vi/%s/default.jpg" % (v[1]), v[3]])
+            self.send ("am", [v[0], v[1], v[2],"http://i.ytimg.com/vi/%s/default.jpg" % (v[1]), v[3]/1000])
 
     # Add the video described by v
     def _addVideo(self, v, sql=True):

@@ -140,8 +140,18 @@ class NaokoDB(object):
         """
         cur = self.cursor()
         cur.execute(stmt, *args)
-        self.con.commit()
+        #self.con.commit()
         return cur
+
+    @dbopen
+    def commit(self):
+        """
+        Commits changes to the database.
+
+        This method exists because pythong 2.7.2 introduced a bug when con.commit() is called with a select statement.
+        Also the self.con.commit()s are commented out due to the same bug.
+        """
+        self.con.commit()
 
     @dbopen
     def executescript(self, script):
@@ -152,7 +162,7 @@ class NaokoDB(object):
         """
         cur = self.cursor()
         cur.executescript(script)
-        self.con.commit()
+        #self.con.commit()
         return cur
 
     @dbopen
