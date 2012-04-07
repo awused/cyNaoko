@@ -596,7 +596,7 @@ class SynchtubeClient(object):
                     name = data.split('!', 1)[0][1:]
                     msg = data[data.find("PRIVMSG " + self.channel + " :") + len("PRIVMSG " + self.channel + " :"):]
                     if not name == self.irc_nick:
-                        self.st_queue.append("(" + name + ") " + msg)
+                        self.st_queue.append(self.filterString("(" + name + ") " + msg)[1])
                     self.logger.info ("IRC %s:%s", name, msg)
         else:
             self.logger.info ("IRC Loop Closed")
@@ -717,15 +717,6 @@ class SynchtubeClient(object):
                                 "delete"            : self.delete,
                                 "lastbans"          : self.lastBans,
                                 "addrandom"         : self.addRandom}
-
-    def getUserByNick(self, nick):
-        name = self.filterString(nick, True)[1]
-        try: return self.userlist[(i for i in self.userlist if self.userlist[i].nick.lower() == name.lower()).next()]
-        except StopIteration: return None
-
-    def getVideoIndexById(self, vid):
-        try: return (idx for idx, ele in enumerate(self.vidlist) if ele.v_sid == vid).next()
-        except StopIteration: return -1
 
     def nextVideo(self):
         self.vidLock.acquire()
@@ -1264,6 +1255,15 @@ class SynchtubeClient(object):
                 self._banUser(target.sid)
             self.asLeader(banUser)
 
+    def getUserByNick(self, nick):
+        name = self.filterString(nick, True)[1]
+        try: return self.userlist[(i for i in self.userlist if self.userlist[i].nick.lower() == name.lower()).next()]
+        except StopIteration: return None
+
+    def getVideoIndexById(self, vid):
+        try: return (idx for idx, ele in enumerate(self.vidlist) if ele.v_sid == vid).next()
+        except StopIteration: return -1
+
     # Filters a string, removing invalid characters
     # Used to sanitize nicks or video titles for printing
     # Returns a boolean describing whether invalid characters were found
@@ -1274,14 +1274,22 @@ class SynchtubeClient(object):
         value = input
         if type (value) is not str and type(value) is not unicode:
             value = str(value)
+        if type(value) is not unicode:
+            try:
+                value = value.decode('utf-8')
+            except UnicodeDecodeError:
+                value = value.decode('iso-8859-15')
         for c in value:
             o = ord(c)
             # Locale independent ascii alphanumeric check
             if isNick and ((o >= 48 and o <= 57) or (o >= 97 and o <= 122) or (o >= 65 and o <= 90)):
                 output.append(c)
-            if (not isNick) and o > 31 and o != 127:
+                continue
+            # Synchtube can't handle code points above 0xfff
+            valid = o > 31 and o != 127 and not (o >= 0xd800 and o <= 0xdfff) and o <= 0xffff
+            if (not isNick) and valid:
                 output.append(c)
-        return (len(output) == len(value) and len , "".join(output))
+        return (len(output) == len(value) and len , "".join(output).encode('utf-8'))
 
     # The following private API methods are fairly low level and work with
     # synchtube sid's (session ids) or raw data arrays. They will usually
