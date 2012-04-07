@@ -716,7 +716,8 @@ class SynchtubeClient(object):
                                 "duplicates"        : self.cleanDuplicates,
                                 "delete"            : self.delete,
                                 "lastbans"          : self.lastBans,
-                                "addrandom"         : self.addRandom}
+                                "addrandom"         : self.addRandom,
+                                "purge"             : self.purge}
 
     def nextVideo(self):
         self.vidLock.acquire()
@@ -1156,7 +1157,7 @@ class SynchtubeClient(object):
 
     # Deletes the last video added by the provided user
     def delete(self, command, user, data):
-        (valid, target) = self.filterString(data, True)
+        target = self.filterString(data, True)[1]
         if not user.mod or target == "":
             target = user.nick
         target = target.lower()
@@ -1171,6 +1172,26 @@ class SynchtubeClient(object):
             def clean():
                self.send("rm", self.vidlist[i].v_sid)
             self.asLeader(clean)
+    
+    # Deletes all the videos posted by the specified user
+    def purge(self, command, user, data):
+        if not user.mod: return
+        target = self.getUserByNick(data)
+        if target == None:
+            target = self.filterString(data, True)[1].lower()
+        else:
+            if target.mod: return
+            target = target.nick.lower()
+        kill = []
+        for v in self.vidlist:
+            if v.nick.lower() == target and not v.v_sid == self.state.current:
+                kill.append(v.v_sid)
+        if len(kill) > 0:
+            def purge():
+                for x in kill:
+                    self.send("rm", x)
+            self.asLeader(purge)
+
 
     def lock (self, command, user, data):
         if not user.mod: return
@@ -1256,8 +1277,8 @@ class SynchtubeClient(object):
             self.asLeader(banUser)
 
     def getUserByNick(self, nick):
-        name = self.filterString(nick, True)[1]
-        try: return self.userlist[(i for i in self.userlist if self.userlist[i].nick.lower() == name.lower()).next()]
+        name = self.filterString(nick, True)[1].lower()
+        try: return self.userlist[(i for i in self.userlist if self.userlist[i].nick.lower() == name).next()]
         except StopIteration: return None
 
     def getVideoIndexById(self, vid):
@@ -1312,7 +1333,7 @@ class SynchtubeClient(object):
     def _sqlInsertVideo(self, v):
         if str(v.uid) == self.userid: return
         vi = v.vidinfo
-        self.dbclient.execute("INSERT OR IGNORE INTO videos VALUES(?, ?, ?, ?)", (vi.site, vi.vid, vi.dur * 1000, vi.title))
+        self.dbclient.execute("INSERT OR IGNORE INTO videos VALUES(?, ?, ?, ?)", (vi.site, vi.vid, vi.dur * 1000, vi.title.decode('utf-8')))
         self.dbclient.execute("INSERT INTO video_stats VALUES(?, ?, ?)", (vi.site, vi.vid, v.nick))
         self.dbclient.commit()
 
