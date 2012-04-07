@@ -25,6 +25,7 @@ from collections import namedtuple, deque
 import ConfigParser
 import random
 from datetime import datetime
+import code
 
 from settings import *
 from database import NaokoDB
@@ -736,7 +737,7 @@ class SynchtubeClient(object):
         self.state.time = int(round(time.time() * 1000))
         self.send("s", [2])
         self.send("pm", self.vidlist[videoIndex].v_sid)
-        self.enqueueMsg("Playing: %s" % (self.filterString(self.vidlist[videoIndex].vidinfo.title)[1]))
+        self.enqueueMsg("Playing: %s" % (self.filterString(self.vidlist[videoIndex].vidinfo.title)[1].decode("utf-8")))
         self.vidLock.release()
 
     # Enqueues a message for sending to both IRC and Synchtube
