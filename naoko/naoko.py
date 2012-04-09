@@ -535,7 +535,7 @@ class SynchtubeClient(object):
         # the logger will still go to the the launching terminals
         # stdout/stderr, however print statements will probably be rerouted
         # to the socket.
-        repl.Repl(port=5001, host='localhost', locals={'naoko': self})
+        self.repl = repl.Repl(port=5001, host='localhost', locals={'naoko': self})
 
         while not self.closing.wait(5):
             # Sleeping first lets everything get initialized
@@ -763,6 +763,7 @@ class SynchtubeClient(object):
         self.closing.set()
         self.closeLock.release()
         self.client.close()
+        self.repl.close()
         self.leading.set()
         self.playerAction.set()
         if self.dbfile:
@@ -804,13 +805,7 @@ class SynchtubeClient(object):
         #self.logger.debug(pprint(self.vidlist))
 
     def shuffle(self, tag, data):
-        newlist = []
-        # Sloppy O(n^2) algorithm, but the list is never too huge and it doesn't require a lock on the list
-        for v in data:
-            newlist.append(self.vidlist[self.getVideoIndexById(v)])
-        self.vidLock.acquire()
-        self.vidlist = newlist
-        self.vidLock.release()
+        self._shuffle(data)
 
     def changeState(self, tag, data):
         self.logger.debug("State is %s %s", tag, data)
@@ -1346,6 +1341,19 @@ class SynchtubeClient(object):
         self.dbclient.execute("INSERT OR IGNORE INTO videos VALUES(?, ?, ?, ?)", (vi.site, vi.vid, vi.dur * 1000, vi.title.decode('utf-8')))
         self.dbclient.execute("INSERT INTO video_stats VALUES(?, ?, ?)", (vi.site, vi.vid, v.nick))
         self.dbclient.commit()
+
+    def _shuffle(self, data):
+        if self.stthread != threading.currentThread():
+            raise Exception("_shuffle should not be called outside the SynchtubeClient thread")
+        indices = {}
+        for i, v in enumerate(self.vidlist):
+            indices[v.v_sid] = i
+        newlist = []
+        for v in data:
+            newlist.append(self.vidlist[indices[v]])
+        self.vidLock.acquire()
+        self.vidlist = newlist
+        self.vidLock.release() 
 
     def _sqlInsertBan(self, user, reason, time):
         auth = 0
