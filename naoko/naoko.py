@@ -26,6 +26,7 @@ import ConfigParser
 import random
 from datetime import datetime
 import code
+import repl
 
 from settings import *
 from database import NaokoDB
@@ -88,14 +89,14 @@ class WebSocket(object):
                     self.field = ''
                     self.value = ''
                 else:
-                    print "Invalid Newline"
+                    self.logger.warn("Invalid Newline")
             elif data == ":":
                 self.field = value
                 self.value = ''
             else:
                 value += data
             last_byte = data
-        print repr(data)
+        self.logger.debug(repr(data))
 
     def _makeHeaders(self, key1, key2):
         self.headers = {'Upgrade'            : 'WebSocket',
@@ -160,7 +161,7 @@ class WebSocket(object):
                     field = ''
                     value = []
                 else:
-                    print "Invalid Newline"
+                    self.logger.warn("Invalid Newline")
             elif c == " " and value[-1] == ":":
                 value.pop()
                 field = "".join(value)
@@ -528,6 +529,14 @@ class SynchtubeClient(object):
             self.sqlthread = threading.Thread(target=SynchtubeClient._sqlloop, args=[self])
             self.sqlthread.start()
 
+        # Start a REPL on port 5001. Only accept connections from localhost
+        # and expose ourself as 'naoko' in the REPL's local scope
+        # WARNING: THE REPL WILL REDIRECT STDOUT AND STDERR.
+        # the logger will still go to the the launching terminals
+        # stdout/stderr, however print statements will probably be rerouted
+        # to the socket.
+        repl.Repl(port=5001, host='localhost', locals={'naoko': self})
+
         while not self.closing.wait(5):
             # Sleeping first lets everything get initialized
             # The parent process will wait
@@ -561,7 +570,7 @@ class SynchtubeClient(object):
             try:
                 data = json.loads(data)
             except ValueError as e:
-                print "Failed to parse", data
+                self.logger.warn("Failed to parse"  + data)
                 raise e;
             if not data or len(data) == 0:
                 self.sendHeartBeat()
