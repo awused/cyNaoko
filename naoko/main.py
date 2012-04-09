@@ -13,7 +13,7 @@ from settings import *
 MIN_DUR = 0.25
 
 # Set up logging
-logging.basicConfig(format='%(name)-15s:%(levelname)-8s - %(message)s')
+logging.basicConfig(format='%(name)-15s:%(levelname)-8s - %(message)s', stream=sys.__stderr__)
 logger = logging.getLogger("socket.io client")
 logger.setLevel(logLevel)
 (info, debug, warning, error) = (logger.info, logger.debug, logger.warning, logger.error)
