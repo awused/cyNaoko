@@ -384,11 +384,11 @@ class IRCClient(object):
         if len(frame) == 0:
             raise Exception("IRC Socket closed")
         frame = frame.strip("\n\r")
-        self.logger.debug ("Received IRC Frame %s", frame)
+        self.logger.debug ("Received IRC Frame %r", frame)
         return frame
 
     def send (self, msg):
-        self.logger.debug ("IRC Send %s", msg.encode("utf-8"))
+        self.logger.debug ("IRC Send %r", msg.encode("utf-8"))
         self.sock.send (msg.encode("utf-8"))
 
 
@@ -607,7 +607,7 @@ class SynchtubeClient(object):
                     msg = data[data.find("PRIVMSG " + self.channel + " :") + len("PRIVMSG " + self.channel + " :"):]
                     if not name == self.irc_nick:
                         self.st_queue.append(self.filterString("(" + name + ") " + msg)[1])
-                    self.logger.info ("IRC %s:%s", name, msg)
+                    self.logger.info ("IRC %r:%r", name, msg)
         else:
             self.logger.info ("IRC Loop Closed")
             self.close()
@@ -662,6 +662,8 @@ class SynchtubeClient(object):
         self.logger.info("Playback Loop Closed")
 
     def _sqlloop(self):
+        self.db_logger = logging.getLogger("stclient.db")
+        self.db_logger.setLevel(logLevel)
         initscript=None
         if self.dbinit:
             initscript=open(self.dbinit).read()
@@ -956,7 +958,7 @@ class SynchtubeClient(object):
         sid = data[0]
         user = self.userlist[sid]
         msg = data[1]
-        self.chat_logger.info("%s: %s" , user.nick, msg)
+        self.chat_logger.info("%s: %r" , user.nick, msg)
 
         if not user.sid == self.sid and self.irc_nick:
             self.irc_queue.append("(" + user.nick + ") " + msg)
@@ -1165,6 +1167,8 @@ class SynchtubeClient(object):
         target = self.filterString(data, True)[1]
         if not user.mod or target == "":
             target = user.nick
+        if user.mod and data.lower() == "-unnamed":
+            target = ''
         target = target.lower()
         videoIndex = self.getVideoIndexById(self.state.current)
         i = len(self.vidlist) - 1
@@ -1187,6 +1191,8 @@ class SynchtubeClient(object):
         else:
             if target.mod: return
             target = target.nick.lower()
+        if user.mod and data.lower() == "-unnamed":
+            target = ''
         kill = []
         for v in self.vidlist:
             if v.nick.lower() == target and not v.v_sid == self.state.current:
@@ -1338,6 +1344,8 @@ class SynchtubeClient(object):
     def _sqlInsertVideo(self, v):
         if str(v.uid) == self.userid: return
         vi = v.vidinfo
+        self.db_logger.debug("Inserting %s into videos", (vi.site, vi.vid, vi.dur * 1000, vi.title.decode('utf-8')))
+        self.db_logger.debug("Inserting %s into video_stats", (vi.site, vi.vid, v.nick))
         self.dbclient.execute("INSERT OR IGNORE INTO videos VALUES(?, ?, ?, ?)", (vi.site, vi.vid, vi.dur * 1000, vi.title.decode('utf-8')))
         self.dbclient.execute("INSERT INTO video_stats VALUES(?, ?, ?)", (vi.site, vi.vid, v.nick))
         self.dbclient.commit()
@@ -1359,6 +1367,7 @@ class SynchtubeClient(object):
         auth = 0
         if user.auth:
             auth = 1
+        self.db_logger.debug("Inserting %s into bans", (reason, auth, user.nick, int(round(time*1000))))
         self.dbclient.execute("INSERT INTO bans VALUES(?, ?, ?, ?)", (reason, auth, user.nick, int(round(time*1000))))
         self.dbclient.commit()
 
