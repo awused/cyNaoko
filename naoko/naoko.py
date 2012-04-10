@@ -1077,13 +1077,12 @@ class SynchtubeClient(object):
         target = target.lower()
         videoIndex = self.getVideoIndexById(self.state.current)
         i = len(self.vidlist) - 1
-        while i >= 0:
+        while i > videoIndex:
             if self.vidlist[i].nick.lower() == target:
                 break
             i -= 1
-        if i <= videoIndex: return
-        # The case where i == 0 requires no action
-        if i > 0:
+        if i == videoIndex: return
+        if i > videoIndex + 1:
             output = dict()
             output["id"] = self.vidlist[i].v_sid
             if videoIndex >= 0:
@@ -1172,15 +1171,14 @@ class SynchtubeClient(object):
         target = target.lower()
         videoIndex = self.getVideoIndexById(self.state.current)
         i = len(self.vidlist) - 1
-        while i >= 0:
+        while i > videoIndex:
             if self.vidlist[i].nick.lower() == target:
                 break
             i -= 1
-        if i <= videoIndex: return
-        if i >= 0:
-            def clean():
-               self.send("rm", self.vidlist[i].v_sid)
-            self.asLeader(clean)
+        if i == videoIndex: return
+        def clean():
+            self.send("rm", self.vidlist[i].v_sid)
+        self.asLeader(clean)
     
     # Deletes all the videos posted by the specified user
     def purge(self, command, user, data):
@@ -1396,8 +1394,8 @@ class SynchtubeClient(object):
         for v in vids:
             self.send ("am", [v[0], v[1], v[2],"http://i.ytimg.com/vi/%s/default.jpg" % (v[1]), v[3]/1000])
             # Everyone except the leader is throttled
-            if not self.leading.isSet():
-                time.sleep(1.05)
+            #if not self.leading.isSet():
+                #time.sleep(5)
 
     # Add the video described by v
     def _addVideo(self, v, sql=True):
