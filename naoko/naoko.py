@@ -1188,6 +1188,9 @@ class SynchtubeClient(object):
         target = self.getUserByNick(data)
         if target == None:
             target = self.filterString(data, True)[1].lower()
+            # Don't default to purging unregistered users
+            if target == '':
+                return
         else:
             if target.mod: return
             target = target.nick.lower()
@@ -1392,6 +1395,9 @@ class SynchtubeClient(object):
         self.logger.debug ("Retrieved %s", vids)
         for v in vids:
             self.send ("am", [v[0], v[1], v[2],"http://i.ytimg.com/vi/%s/default.jpg" % (v[1]), v[3]/1000])
+            # Everyone except the leader is throttled
+            if not self.leading.isSet():
+                time.sleep(1.05)
 
     # Add the video described by v
     def _addVideo(self, v, sql=True):
