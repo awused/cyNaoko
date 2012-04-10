@@ -1393,9 +1393,6 @@ class SynchtubeClient(object):
         self.logger.debug ("Retrieved %s", vids)
         for v in vids:
             self.send ("am", [v[0], v[1], v[2],"http://i.ytimg.com/vi/%s/default.jpg" % (v[1]), v[3]/1000])
-            # Everyone except the leader is throttled
-            #if not self.leading.isSet():
-                #time.sleep(5)
 
     # Add the video described by v
     def _addVideo(self, v, sql=True):
