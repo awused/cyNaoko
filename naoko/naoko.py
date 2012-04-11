@@ -895,6 +895,7 @@ class SynchtubeClient(object):
         self.userlist[sid]= self.userlist[sid]._replace(nick=nick)
         if not valid:
             self.nameBan(sid)
+            return
 
         user = self.userlist[sid]
         if user.nickChange:
@@ -902,13 +903,12 @@ class SynchtubeClient(object):
                 return
             else:
                 # Only a script/bot can change nicks multiple times
-                # TODO -- Change to ban once I confirm there are no false positives
                 self.pending[sid] = True
-                self.logger.info("Attempted kick of %s for multiple nick changes", user.nick)
-                reason = "%s changed names multiple times" % ( user.nick)
-                def kickUser():
-                    self._kickUser(sid, reason)
-                self.asLeader(kickUser)
+                self.logger.info("Attempted ban of %s for multiple nick changes", user.nick)
+                reason = "%s changed names multiple times" % (user.nick)
+                def banUser():
+                    self._banUser(sid, reason)
+                self.asLeader(banUser)
         else:
             self.userlist[sid] = self.userlist[sid]._replace(nickChange=True)
 
@@ -996,7 +996,7 @@ class SynchtubeClient(object):
 
     def skip(self, command, user, data):
         if not user.mod: return
-        # Due to the complexities of switching videos, she does not give back the leader after this
+        # Due to the complexities of switching videos she does not give back the leader after this
         # TODO - Make it so she does
         self.asLeader(self.nextVideo, False)
 
@@ -1030,25 +1030,36 @@ class SynchtubeClient(object):
         user.msgs.append(time.time())
         span = user.msgs[-1] - user.msgs[0]
         if span < self.spam_interval * user.msgs.maxlen and len(user.msgs) == user.msgs.maxlen:
-            if self.pending.has_key(sid) or user.mod or user.sid == self.sid:
-                return
-            else:
-                self.pending[sid] = True
-                if self.banTracker.has_key(user.nick):
-                    self.banTracker[user.nick] = self.banTracker[user.nick] + 1
-                else:
-                    self.banTracker[user.nick] = 1
-                self.logger.info("Attempted kick of %s for spam", user.nick)
-                reason = "[%d times] %s sent %d messages in %1.3f seconds" % (self.banTracker[user.nick], user.nick, len(user.msgs), span)
-                if self.banTracker[user.nick] >= 3:
-                    def banUser():
-                        self._banUser(sid, reason)
-                    self.asLeader(banUser)
-                else:
-                    def kickUser():
-                        self._kickUser(sid, reason)
-                    self.asLeader(kickUser)
+            self.logger.info("Attempted kick of %s for spam", user.nick)
+            reason = "%s sent %d messages in %1.3f seconds" % (user.nick, len(user.msgs), span)
+            self.chatKick(user, reason)
+        elif re.search(r"(synchtube\.com\/r|synchtu\.be\/)", msg): 
+            self.logger.info("Attempted kick of %s for blacklisted phrase", user.nick)
+            reason = "%s sent a blacklisted message" % (user.nick)
+            self.chatKick(user, reason)
 
+    # Kicks a user for something they did in chat
+    # Tracks kicks by username for a three strikes policy
+    def chatKick(self, user, reason):
+        if self.pending.has_key(user.sid) or user.mod or user.sid == self.sid:
+            return
+        else:
+            self.pending[user.sid] = True
+            if self.banTracker.has_key(user.nick):
+                self.banTracker[user.nick] = self.banTracker[user.nick] + 1
+            else:
+                self.banTracker[user.nick] = 1
+
+            reason = "[%d times] %s" % (self.banTracker[user.nick], reason)
+            if self.banTracker[user.nick] >= 3:
+                def banUser():
+                    self._banUser(user.sid, reason)
+                self.asLeader(banUser)
+            else:
+                def kickUser():
+                    self._kickUser(user.sid, reason)
+                self.asLeader(kickUser)
+        
     def leader(self, tag, data):
         self.leader_sid = data
         if self.leader_sid == self.sid:
