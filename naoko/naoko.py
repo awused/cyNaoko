@@ -355,6 +355,8 @@ class IRCClient(object):
         # IRC pings can be unpredictable, so a timeout (except when closing) isn't practical
         self.logger = logging.getLogger("ircclient")
         self.logger.setLevel(logLevel)
+        self.loggedIn = False
+        self.inChannel = False
         self.server = server
         self.channel = channel
         self.nick = nick
@@ -380,7 +382,7 @@ class IRCClient(object):
         self.send("PRIVMSG " + self.channel + " :" + msg + "\n")
 
     def recvMessage (self):
-        frame = self.sock.recv(2048)
+        frame = self.sock.recv(4096)
         if len(frame) == 0:
             raise Exception("IRC Socket closed")
         frame = frame.strip("\n\r")
@@ -424,6 +426,8 @@ class SynchtubeClient(object):
         self.logger.setLevel(logLevel)
         self.chat_logger = logging.getLogger("stclient.chat")
         self.chat_logger.setLevel(logLevel)
+        self.irc_logger = logging.getLogger("stclient.irc")
+        self.irc_logger.setLevel(logLevel)
         self.pending = {}
         self.leader_sid = None
         self.pendingToss = False
@@ -593,21 +597,63 @@ class SynchtubeClient(object):
     # Responsible for communicating with IRC
     def _ircloop(self):
         time.sleep(5)
-        self.logger.info("Starting IRC Client")
+        self.irc_logger.info("Starting IRC Client")
         self.ircclient = client = IRCClient(self.server, self.channel, self.irc_nick, self.ircpw)
         self.irc_queue = deque()
+        failCount = 0
         while not self.closing.isSet():
             frame = deque(client.recvMessage().split("\n"))
             while len(frame) > 0:
                 data = frame.popleft().strip("\r")
                 if data.find("PING :") != -1:
                     client.ping()
-                if data.find("PRIVMSG " + self.channel + " :") != -1:
+                elif data.find("PRIVMSG " + self.channel + " :") != -1:
                     name = data.split('!', 1)[0][1:]
                     msg = data[data.find("PRIVMSG " + self.channel + " :") + len("PRIVMSG " + self.channel + " :"):]
                     if not name == self.irc_nick:
                         self.st_queue.append(self.filterString("(" + name + ") " + msg)[1])
-                    self.logger.info ("IRC %r:%r", name, msg)
+                    self.irc_logger.info ("IRC %r:%r", name, msg)
+                elif data.find("PRIVMSG " + self.irc_nick + " :") != -1:
+                    continue
+                elif data.find("404 " + self.irc_nick + " " + self.channel +" :Cannot send to channel") != -1:
+                    failCount += 1
+                    if failCount > 4:
+                        self.irc_logger.info("Could not send to %s %d times, restarting" % (self.channel, failCount))
+                        self.sendChat("Failed to send messages to the IRC channel %d times, check my configuration file." % (failCount))
+                        self.close()
+                    if self.ircpw and not client.loggedIn:
+                        client.send("PRIVMSG nickserv :id " + self.ircpw + "\n")
+                    if not client.inChannel:
+                        client.send("JOIN " + self.channel + "\n")
+
+                elif data.find("NOTICE " + self.irc_nick + " :Password accepted - you are now recognized.") != -1:
+                    client.loggedIn = True
+                    self.irc_logger.debug("Authenticated")
+                elif data.find("JOIN :" + self.channel) != -1:
+                    client.inChannel = True
+                    self.irc_logger.debug("Joined Channel")
+                elif data.find("433 * " + self.irc_nick + " :Nickname is already in use.") != -1:
+                    if self.ircpw:
+                        self.irc_logger.info("Nickname in use, attempting to ghost.")
+                        client.send("NICK " + self.irc_nick[:24] + "_naoko\n")
+                        client.send("PRIVMSG nickserv :ghost " +self.irc_nick + " " + self.ircpw + "\n")
+                    else:
+                        self.irc_logger.info("Nickname in use and no password provided. Switching to alternate name")
+                        self.irc_nick = self.irc_nick[:29] + "2"
+                        client.send("NICK " + self.irc_nick + "\n")
+                
+                elif data.find("NOTICE " + self.irc_nick[:24] + "_naoko :Ghost with your nick has been killed.") != -1:
+                    self.irc_logger.info("Ghost successful, reverting name.")
+                    client.send("NICK " + self.irc_nick + "\n")
+                    client.send("PRIVMSG nickserv :id " + self.ircpw + "\n")
+                    client.send("JOIN " + self.channel + "\n")
+                elif data.find("NOTICE " + self.irc_nick [:24] + "_naoko :Access denied.") != -1:
+                    self.irc_logger.info("Ghost failed due to incorrect password.")
+                    self.sendChat("IRC nickname in use and incorrect password supplied. Disabling IRC support.")
+                    self.irc_nick = None
+                    self.irc_queue = deque(maxlen=0)
+                    client.close()
+                    return
         else:
             self.logger.info ("IRC Loop Closed")
             self.close()
@@ -1261,6 +1307,18 @@ class SynchtubeClient(object):
     def kick(self, command, user, data):
         if not user.mod: return
         args = data.split(' ', 1)
+
+        if args[0].lower() == "-unnamed":
+            kicks = []
+            for u in self.userlist:
+                if self.userlist[u].nick == "unnamed":
+                    kicks.append(self.userlist[u].sid)
+            def kickUsers():
+                for k in kicks:
+                    self._kickUser(k, sendMessage=False)
+            self.asLeader(kickUsers)
+            return
+
         target = self.getUserByNick(args[0])
         if not target or target.mod: return
         self.logger.info ("Kick Target %s Requestor %s", target, user)
