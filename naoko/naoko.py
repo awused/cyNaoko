@@ -18,7 +18,7 @@ import sched, time
 import socket
 import struct
 import threading
-import urllib, urlparse
+import urllib, urlparse, httplib
 import re
 from urllib2 import Request, urlopen
 from collections import namedtuple, deque
@@ -508,13 +508,15 @@ class SynchtubeClient(object):
         # Tracks when she needs to update her playback status
         # This is used to interrupt her timer as she is waiting for the end of a video
         self.playerAction = threading.Event()
-        # Prevents the SQL thread from busy-waiting
+        # Prevent the SQL and API threads from busy-waiting
         self.sqlAction = threading.Event()
+        self.apiAction = threading.Event()
         # Tracks whether she is leading
         # Is not triggered when she is going to give the leader position back or turn tv mode back on
         self.leading = threading.Event()
         self.irc_queue = deque(maxlen=0)
         self.sql_queue = deque(maxlen=0)
+        self.api_queue = deque()
 
         self.chatthread = threading.Thread (target=SynchtubeClient._chatloop, args=[self])
         self.chatthread.start()
@@ -524,6 +526,9 @@ class SynchtubeClient(object):
 
         self.playthread = threading.Thread (target=SynchtubeClient._playloop, args=[self])
         self.playthread.start()
+
+        self.apithread = threading.Thread (target=SynchtubeClient._apiloop, args=[self])
+        self.apithread.start()
 
         if self.irc_nick:
             self.ircthread = threading.Thread(target=SynchtubeClient._ircloop, args=[self])
@@ -552,6 +557,7 @@ class SynchtubeClient(object):
                 status = status and (not self.client.heartBeatEvent or self.client.hbthread.isAlive())
                 status = status and (not self.dbfile or self.sqlthread.isAlive())
                 status = status and self.playthread.isAlive()
+                status = status and self.apithread.isAlive()
             except Exception as e:
                 self.logger.error (e)
                 status = False
@@ -613,10 +619,14 @@ class SynchtubeClient(object):
                     if not name == self.irc_nick:
                         self.st_queue.append(self.filterString("(" + name + ") " + msg)[1])
                     self.irc_logger.info ("IRC %r:%r", name, msg)
+                # Currently ignore messages sent directly to her
                 elif data.find("PRIVMSG " + self.irc_nick + " :") != -1:
                     continue
+                
+                # Failed to send to the channel
                 elif data.find("404 " + self.irc_nick + " " + self.channel +" :Cannot send to channel") != -1:
                     failCount += 1
+                    self.irc_logger.debug("Failed to sent to channel %d times" % (failCount))
                     if failCount > 4:
                         self.irc_logger.info("Could not send to %s %d times, restarting" % (self.channel, failCount))
                         self.sendChat("Failed to send messages to the IRC channel %d times, check my configuration file." % (failCount))
@@ -632,27 +642,42 @@ class SynchtubeClient(object):
                 elif data.find("JOIN :" + self.channel) != -1:
                     client.inChannel = True
                     self.irc_logger.debug("Joined Channel")
+
+                # Disable IRC support when an incorrect password is provided.
+                elif data.find("NOTICE " + self.irc_nick + " :Password incorrect.") != -1:
+                    self.irc_logger.info("IRC login failed due to incorrect password.")
+                    self.sendChat("Incorrect IRC password provided. Disabling IRC support.")
+                    self.disableIRC()
+                    return
+
+                # Nickname in use, attempt to ghost if a password is provided or use an alternate name
                 elif data.find("433 * " + self.irc_nick + " :Nickname is already in use.") != -1:
                     if self.ircpw:
                         self.irc_logger.info("Nickname in use, attempting to ghost.")
                         client.send("NICK " + self.irc_nick[:24] + "_naoko\n")
                         client.send("PRIVMSG nickserv :ghost " +self.irc_nick + " " + self.ircpw + "\n")
                     else:
+                        failCount += 1
+                        if failCount > 4:
+                            self.irc_logger.info("Nickname and %d attempted alternatives in use" % (failCount))
+                            self.sendChat("Unable to find an unused IRC nickname. Disabling IRC support.")
+                            self.disableIRC()
+                            return
                         self.irc_logger.info("Nickname in use and no password provided. Switching to alternate name")
-                        self.irc_nick = self.irc_nick[:29] + "2"
+                        self.irc_nick = self.irc_nick[:29] + str(failCount)
                         client.send("NICK " + self.irc_nick + "\n")
-                
+                # Ghost Succeeded
                 elif data.find("NOTICE " + self.irc_nick[:24] + "_naoko :Ghost with your nick has been killed.") != -1:
                     self.irc_logger.info("Ghost successful, reverting name.")
                     client.send("NICK " + self.irc_nick + "\n")
                     client.send("PRIVMSG nickserv :id " + self.ircpw + "\n")
                     client.send("JOIN " + self.channel + "\n")
+                # Ghost failed. Since the nickname is in use and an incorrect password is provided disable IRC
+                # to avoid being stuck in a restart loop and bring attention to the incorrect password.
                 elif data.find("NOTICE " + self.irc_nick [:24] + "_naoko :Access denied.") != -1:
                     self.irc_logger.info("Ghost failed due to incorrect password.")
-                    self.sendChat("IRC nickname in use and incorrect password supplied. Disabling IRC support.")
-                    self.irc_nick = None
-                    self.irc_queue = deque(maxlen=0)
-                    client.close()
+                    self.sendChat("IRC nickname in use and incorrect password provided. Disabling IRC support.")
+                    self.disableIRC()
                     return
         else:
             self.logger.info ("IRC Loop Closed")
@@ -723,6 +748,16 @@ class SynchtubeClient(object):
             while len(self.sql_queue) > 0:
                 self.sql_queue.popleft()()
         self.logger.info("SQL Loop Closed")
+
+    # This loop is responsible for dealing with all external APIs
+    # This includes validating youtube videos and any future functionality
+    def _apiloop(self):
+        while self.apiAction.wait():
+            if self.closing.isSet(): break
+            self.apiAction.clear()
+            while len(self.api_queue) > 0:
+                self.api_queue.popleft()()
+        self.logger.info("API Loop Closed")
 
     def _initHandlers(self):
         self.handlers = {"<"                : self.chat,
@@ -797,6 +832,11 @@ class SynchtubeClient(object):
         self.enqueueMsg("Playing: %s" % (self.filterString(self.vidlist[videoIndex].vidinfo.title)[1].decode("utf-8")))
         self.vidLock.release()
 
+    def disableIRC(self):
+        self.irc_nick = None
+        self.irc_queue = deque(maxlen=0)
+        self.ircclient.close()
+
     # Enqueues a message for sending to both IRC and Synchtube
     # This should not be used for bridging chat between IRC and Synchtube
     def enqueueMsg(self, msg):
@@ -814,10 +854,98 @@ class SynchtubeClient(object):
         self.repl.close()
         self.leading.set()
         self.playerAction.set()
+        self.apiAction.set()
         if self.dbfile:
             self.sqlAction.set()
         if self.irc_nick:
             self.ircclient.close()
+
+    # Bans a user for changing to an invalid name
+    def nameBan(self, sid):
+        if self.pending.has_key(sid): return
+        self.pending[sid] = True
+        user = self.userlist[sid]
+        self.logger.info("Attempted ban of %s for invalid characters in name", user.nick)
+        reason = "Name [%s] contains illegal characters" % user.nick
+        def banUser():
+            self._banUser(sid, reason)
+        self.asLeader(banUser)
+    
+    def sendChat(self, msg):
+        self.logger.debug(msg)
+        self.send("<", msg)
+
+    def send(self, tag='', data=''):
+        buf = []
+        if not tag == '':
+            buf.append(tag)
+            if not data == '':
+                buf.append(data)
+        try:
+            buf = json.dumps(buf, encoding="utf-8")
+        except UnicodeDecodeError:
+            buf = json.dumps(buf, encoding="iso-8859-15")
+        self.client.send(3, data=buf)
+
+    def asLeader(self, action=None, giveBack=True):
+        self.leader_queue.append(action)
+        if self.leader_sid and self.leader_sid != self.sid and giveBack and not self.pendingToss:
+            oldLeader = self.leader_sid
+            def tossLeader():
+                self._tossLeader(oldLeader)
+            self.pendingToss = True
+            self.tossLeader = tossLeader
+        if self.room_info["tv?"] and giveBack and not self.pendingToss:
+            def turnOnTV():
+                self.send("turnon_tv")
+            self.pendingToss = True
+            self.tossLeader = turnOnTV
+        self.takeLeader()
+
+    def changeLeader(self, sid):
+        if sid == self.leader_sid: return
+        if sid == self.sid:
+            self.takeLeader()
+            return
+        def tossLeader():
+            self._tossLeader(sid)
+        self.pendingToss = True
+        self.tossLeader = tossLeader
+        self.takeLeader()
+
+    # Checks the currently playing video against a provided API
+    def checkVideo(self, vidinfo):
+        # Only handles youtube right now
+        if vidinfo.site == 'yt':
+            def checkYoutube():
+                self._checkYoutube(vidinfo.vid)
+            self.api_queue.append(checkYoutube)
+        self.apiAction.set()
+
+    # Kicks a user for something they did in chat
+    # Tracks kicks by username for a three strikes policy
+    def chatKick(self, user, reason):
+        if self.pending.has_key(user.sid) or user.mod or user.sid == self.sid:
+            return
+        else:
+            self.pending[user.sid] = True
+            if self.banTracker.has_key(user.nick):
+                self.banTracker[user.nick] = self.banTracker[user.nick] + 1
+            else:
+                self.banTracker[user.nick] = 1
+
+            reason = "[%d times] %s" % (self.banTracker[user.nick], reason)
+            if self.banTracker[user.nick] >= 3:
+                def banUser():
+                    self._banUser(user.sid, reason)
+                self.asLeader(banUser)
+            else:
+                def kickUser():
+                    self._kickUser(user.sid, reason)
+                self.asLeader(kickUser)
+
+    # Handlers for Synchtube message types
+    # All of them receive input in the form (tag, data)
 
     def addMedia(self, tag, data):
         self._addVideo(data)
@@ -830,17 +958,6 @@ class SynchtubeClient(object):
         if "after" in data:
             after = data["after"]
         self._moveVideo(data["id"], after)
-
-    # Bans a user for changing to an invalid name
-    def nameBan(self, sid):
-        if self.pending.has_key(sid): return
-        self.pending[sid] = True
-        user = self.userlist[sid]
-        self.logger.info("Attempted ban of %s for invalid characters in name", user.nick)
-        reason = "Name [%s] contains illegal characters" % user.nick
-        def banUser():
-            self._banUser(sid, reason)
-        self.asLeader(banUser)
 
     def changeMedia(self, tag, data):
         self.state.current = None
@@ -875,7 +992,7 @@ class SynchtubeClient(object):
         if self.leading.isSet() and (not self.state.previous == None) and (not self.getVideoIndexById(self.state.previous) == None):
             self.send ("rm", self.state.previous)
         self.state.previous = None
-        self.state.current = data [1]
+        self.state.current = data[1]
         index = self.getVideoIndexById(self.state.current)
         if index == None:
             self.sendMsg("Unexpected video, restarting")
@@ -883,6 +1000,7 @@ class SynchtubeClient(object):
             return
         self.state.dur = self.vidlist[index].vidinfo.dur
         self.changeState(tag, data[2])
+        self.checkVideo(self.vidlist[index].vidinfo)
         self.logger.debug("Playing %s %s", tag, data)
 
     def ignore(self, tag, data):
@@ -927,21 +1045,9 @@ class SynchtubeClient(object):
         except KeyError:
             self.logger.exception("Failure to delete user %s from %s", data, self.userlist)
 
-    def sendChat(self, msg):
-        self.logger.debug(msg)
-        self.send("<", msg)
-
-    def send(self, tag='', data=''):
-        buf = []
-        if not tag == '':
-            buf.append(tag)
-            if not data == '':
-                buf.append(data)
-        try:
-            buf = json.dumps(buf, encoding="utf-8")
-        except UnicodeDecodeError:
-            buf = json.dumps(buf, encoding="iso-8859-15")
-        self.client.send(3, data=buf)
+    def users(self, tag, data):
+        for u in data:
+            self._addUser(u)
 
     def selfInfo(self, tag, data):
         self._addUser(data)
@@ -963,42 +1069,6 @@ class SynchtubeClient(object):
             self.send ("turnoff_tv")
         else:
             self.send("takeleader", self.sid)
-
-    def asLeader(self, action=None, giveBack=True):
-        self.leader_queue.append(action)
-        if self.leader_sid and self.leader_sid != self.sid and giveBack and not self.pendingToss:
-            oldLeader = self.leader_sid
-            def tossLeader():
-                self._tossLeader(oldLeader)
-            self.pendingToss = True
-            self.tossLeader = tossLeader
-        if self.room_info["tv?"] and giveBack and not self.pendingToss:
-            def turnOnTV():
-                self.send("turnon_tv")
-            self.pendingToss = True
-            self.tossLeader = turnOnTV
-        self.takeLeader()
-
-    def users(self, tag, data):
-        for u in data:
-            self._addUser(u)
-
-    def changeLeader(self, sid):
-        if sid == self.leader_sid: return
-        if sid == self.sid:
-            self.takeLeader()
-            return
-        def tossLeader():
-            self._tossLeader(sid)
-        self.pendingToss = True
-        self.tossLeader = tossLeader
-        self.takeLeader()
-
-    def skip(self, command, user, data):
-        if not user.mod: return
-        # Due to the complexities of switching videos she does not give back the leader after this
-        # TODO - Make it so she does
-        self.asLeader(self.nextVideo, False)
 
     def chat(self, tag, data):
         sid = data[0]
@@ -1037,29 +1107,7 @@ class SynchtubeClient(object):
             self.logger.info("Attempted kick of %s for blacklisted phrase", user.nick)
             reason = "%s sent a blacklisted message" % (user.nick)
             self.chatKick(user, reason)
-
-    # Kicks a user for something they did in chat
-    # Tracks kicks by username for a three strikes policy
-    def chatKick(self, user, reason):
-        if self.pending.has_key(user.sid) or user.mod or user.sid == self.sid:
-            return
-        else:
-            self.pending[user.sid] = True
-            if self.banTracker.has_key(user.nick):
-                self.banTracker[user.nick] = self.banTracker[user.nick] + 1
-            else:
-                self.banTracker[user.nick] = 1
-
-            reason = "[%d times] %s" % (self.banTracker[user.nick], reason)
-            if self.banTracker[user.nick] >= 3:
-                def banUser():
-                    self._banUser(user.sid, reason)
-                self.asLeader(banUser)
-            else:
-                def kickUser():
-                    self._kickUser(user.sid, reason)
-                self.asLeader(kickUser)
-        
+    
     def leader(self, tag, data):
         self.leader_sid = data
         if self.leader_sid == self.sid:
@@ -1075,6 +1123,12 @@ class SynchtubeClient(object):
     # All of them receive input in the form (command, user, data)
     # Where command is the typed command, user is the user who sent the message
     # and data is everything following the command in the chat message
+
+    def skip(self, command, user, data):
+        if not user.mod: return
+        # Due to the complexities of switching videos she does not give back the leader after this
+        # TODO - Make it so she does
+        self.asLeader(self.nextVideo, False)
 
     def mute(self, command, user, data):
         if user.mod:
@@ -1441,17 +1495,66 @@ class SynchtubeClient(object):
         self.dbclient.execute("INSERT INTO bans VALUES(?, ?, ?, ?)", (reason, auth, user.nick, int(round(time*1000))))
         self.dbclient.commit()
 
+    # Checks to see if the current youtube is valid
+    def _checkYoutube(self, v):
+        data = self._getYoutubeAPIVidInfo(v)
+        if data and isinstance(data, dict) and not "error" in data:
+            try:
+                data = data["data"]
+                # When someone has manually added a video with an incorrect duration
+                if self.state.dur != data["duration"]:
+                    self.logger.debug("Duration mismatch: %d expected, %d actual." % (self.state.dur, data["duration"]))
+                    self.state.dur = data["duration"]
+                    self.playerAction.set()
+                return
+            except (TypeError, ValueError, KeyError) as e:
+                # Improperly formed youtube api response
+                # Assume broken video and skip it
+                self.logger.info("Invalid youtube api response.")
+        if self.leading.isSet():
+            self.enqueueMsg("Invalid youtube video.")
+            self.nextVideo()
+
+    def _getYoutubeAPIVidInfo(self, v):
+        self.logger.debug("Retrieving video information from the Youtube API.")
+        con = httplib.HTTPSConnection("gdata.youtube.com", 443, timeout=10)
+        params = {'v' : 2, 'alt': 'jsonc'}
+        data = None
+        try:
+            con.request("GET", "/feeds/api/videos/%s?%s" % (v, urllib.urlencode(params)))
+            data = json.loads(con.getresponse().read())
+            #self.logger.debug(data)
+        except Exception as e:
+            # Many things can go wrong with an HTTP request or during JSON parsing
+            self.logger.info("Error retrieving Youtube API information.")
+            self.logger.info(e)
+        finally:
+            con.close()
+            return data
+
     def _lastBans(self, nick, num):
-        rows = self.dbclient.fetch("SELECT timestamp, reason FROM bans WHERE uname = ? COLLATE NOCASE ORDER BY timestamp DESC LIMIT ?", (nick, num))
-        if len (rows) == 0:
-            self.enqueueMsg("No recorded bans for %s" % nick)
-            return
-        if num > 1:
-            self.enqueueMsg("Last %d bans for user %s:" % (num, nick))
+        if not nick == "-all":
+            rows = self.dbclient.fetch("SELECT timestamp, reason FROM bans WHERE uname = ? COLLATE NOCASE ORDER BY timestamp DESC LIMIT ?", (nick, num))
+            if len (rows) == 0:
+                self.enqueueMsg("No recorded bans for %s" % nick)
+                return
+            if num > 1:
+                self.enqueueMsg("Last %d bans for user %s:" % (num, nick))
+            else:
+                self.enqueueMsg("Last ban for user %s:" % (nick))
+            for r in rows:
+                self.enqueueMsg("%s - %s" % (datetime.fromtimestamp(r[0] / 1000).isoformat(' '), r[1]))
         else:
-            self.enqueueMsg("Last ban for user %s:" % (nick))
-        for r in rows:
-            self.enqueueMsg("%s - %s" % (datetime.fromtimestamp(r[0] / 1000).isoformat(' '), r[1]))
+            rows = self.dbclient.fetch("SELECT timestamp, reason, uname FROM bans ORDER BY timestamp DESC LIMIT ?", (num,))
+            if len (rows) == 0:
+                self.enqueueMsg("No recorded bans")
+                return
+            if num > 1:
+                self.enqueueMsg("Last %d bans:" % (num,))
+            else:
+                self.enqueueMsg("Last ban:")
+            for r in rows:
+                self.enqueueMsg("%s - %s - %s" % (r[2], datetime.fromtimestamp(r[0] / 1000).isoformat(' '), r[1]))
 
     def _addRandom(self, num):
         # Limit to once every 5 seconds
