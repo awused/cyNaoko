@@ -378,7 +378,7 @@ class IRCClient(object):
         self.send ("QUIT :quit\n")
         self.sock.close()
 
-    def sendmsg (self, msg):
+    def sendMsg (self, msg):
         self.send("PRIVMSG " + self.channel + " :" + msg + "\n")
 
     def recvMessage (self):
@@ -692,7 +692,7 @@ class SynchtubeClient(object):
                 self.st_queue.clear()
             else:
                 if len (self.irc_queue) > 0:
-                    self.ircclient.sendmsg(self.irc_queue.popleft())
+                    self.ircclient.sendMsg(self.irc_queue.popleft())
                 if len (self.st_queue) > 0:
                     self.sendChat(self.st_queue.popleft())
             time.sleep(self.spam_interval)
@@ -818,7 +818,7 @@ class SynchtubeClient(object):
         if videoIndex == None:
             videoIndex = -1
         if len (self.vidlist) == 0:
-            self.sendMsg("Video list is empty, restarting")
+            self.sendChat("Video list is empty, restarting")
             self.close()
         videoIndex = (videoIndex + 1) % len(self.vidlist)
         if len(self.vidlist) > 1:
@@ -872,7 +872,7 @@ class SynchtubeClient(object):
         self.asLeader(banUser)
     
     def sendChat(self, msg):
-        self.logger.debug(msg)
+        self.logger.debug(repr(msg))
         self.send("<", msg)
 
     def send(self, tag='', data=''):
@@ -925,7 +925,7 @@ class SynchtubeClient(object):
     # Kicks a user for something they did in chat
     # Tracks kicks by username for a three strikes policy
     def chatKick(self, user, reason):
-        if self.pending.has_key(user.sid) or user.mod or user.sid == self.sid:
+        if self.pending.has_key(user.sid):
             return
         else:
             self.pending[user.sid] = True
@@ -995,7 +995,7 @@ class SynchtubeClient(object):
         self.state.current = data[1]
         index = self.getVideoIndexById(self.state.current)
         if index == None:
-            self.sendMsg("Unexpected video, restarting")
+            self.sendChat("Unexpected video, restarting")
             self.close()
             return
         self.state.dur = self.vidlist[index].vidinfo.dur
@@ -1096,6 +1096,8 @@ class SynchtubeClient(object):
                     self.logger.warn("No handler for %s [%s]", command, arg)
             else:
                 fn(command, user, arg)
+
+        if user.mod or user.sid == self.sid: return
 
         user.msgs.append(time.time())
         span = user.msgs[-1] - user.msgs[0]
@@ -1334,6 +1336,8 @@ class SynchtubeClient(object):
             msg += "Not "
         msg += "Muted]"
         self.sendChat(msg)
+        if self.irc_nick:
+            self.ircclient.sendMsg(msg)
 
     def restart(self, command, user, data):
         if user.mod:
@@ -1465,15 +1469,6 @@ class SynchtubeClient(object):
         user = SynchtubeUser(**userinfo)
         self.userlist[user.sid] = user
 
-    def _sqlInsertVideo(self, v):
-        if str(v.uid) == self.userid: return
-        vi = v.vidinfo
-        self.db_logger.debug("Inserting %s into videos", (vi.site, vi.vid, vi.dur * 1000, vi.title.decode('utf-8')))
-        self.db_logger.debug("Inserting %s into video_stats", (vi.site, vi.vid, v.nick))
-        self.dbclient.execute("INSERT OR IGNORE INTO videos VALUES(?, ?, ?, ?)", (vi.site, vi.vid, vi.dur * 1000, vi.title.decode('utf-8')))
-        self.dbclient.execute("INSERT INTO video_stats VALUES(?, ?, ?)", (vi.site, vi.vid, v.nick))
-        self.dbclient.commit()
-
     def _shuffle(self, data):
         if self.stthread != threading.currentThread():
             raise Exception("_shuffle should not be called outside the SynchtubeClient thread")
@@ -1495,35 +1490,78 @@ class SynchtubeClient(object):
         self.dbclient.execute("INSERT INTO bans VALUES(?, ?, ?, ?)", (reason, auth, user.nick, int(round(time*1000))))
         self.dbclient.commit()
 
-    # Checks to see if the current youtube is valid
-    def _checkYoutube(self, v):
-        data = self._getYoutubeAPIVidInfo(v)
-        if data and isinstance(data, dict) and not "error" in data:
+    # Checks to see if the current youtube video isn't invalid, blocked, or removed
+    # Also updates the duration if necessary to prevent certain types of annoying attacks on the room
+    def _checkYoutube(self, vid):
+        data = self._getYoutubeVideoInfo(vid)
+        if data:
+            title, dur, embed = data
+            if not embed and self.leading.isSet():
+                self.logger.debug("Youtube embedding disabled.")
+                self.enqueueMsg("Embedding disabled.")
+                self.nextVideo()
+            # When someone has manually added a video with an incorrect duration
+            elif self.state.dur != dur:
+                self.logger.debug("Duration mismatch: %d expected, %d actual." % (self.state.dur, dur))
+                self.state.dur = dur
+                self.playerAction.set()
+            return
+        if self.leading.isSet():
+            self.enqueueMsg("Invalid Youtube video.")
+            self.nextVideo()
+
+    # Validates a video before inserting it into the database
+    # Will correct invalid durations and titles for youtube videos
+    # This makes SQL inserts dependent on the external API
+    # TODO -- Maybe -- detect if there's a communication error/timeout and let the insertion go through anyway
+    def _validateSQLInsert(self, v):
+        vi = v.vidinfo
+        dur = vi.dur
+        title = vi.title
+        valid = True
+        if vi.site == 'yt':
+            valid, title, dur = self._validateYoutube(vi)
+        # The video is invalid, don't insert it
+        if not valid:
+            self.logger.debug("Invalid video, skipping SQL insert.")
+            return
+        def insert():
+            self._sqlInsertVideo(v, title, dur)
+        self.sql_queue.append(insert)
+        self.sqlAction.set()
+        
+    def _validateYoutube(self, vi):
+        data = self._getYoutubeVideoInfo(vi.vid)
+        # Only accept valid videos with embedding enabled
+        if data:
+            title, dur, embed = data
+            if embed:
+                return (True, title, dur)
+        return (False, None, None)
+
+    # Grab relevant information from a reponse from the Youtube API packed in a tuple
+    # Returns False if there was an error of any kind
+    def _getYoutubeVideoInfo(self, vid):
+        data = self._getYoutubeAPIVidInfo(vid) 
+        if isinstance(data, dict) and not "error" in data:
             try:
                 data = data["data"]
-                # When someone has manually added a video with an incorrect duration
-                if self.state.dur != data["duration"]:
-                    self.logger.debug("Duration mismatch: %d expected, %d actual." % (self.state.dur, data["duration"]))
-                    self.state.dur = data["duration"]
-                    self.playerAction.set()
-                return
+                return (data["title"], data["duration"], data["accessControl"]["embed"] == "allowed")
             except (TypeError, ValueError, KeyError) as e:
                 # Improperly formed youtube api response
                 # Assume broken video and skip it
-                self.logger.info("Invalid youtube api response.")
-        if self.leading.isSet():
-            self.enqueueMsg("Invalid youtube video.")
-            self.nextVideo()
+                self.logger.info("Invalid Youtube API response.")
+        return False
 
-    def _getYoutubeAPIVidInfo(self, v):
+    # Fetch Youtube API information for a single video and unpack it
+    def _getYoutubeAPIVidInfo(self, vid):
         self.logger.debug("Retrieving video information from the Youtube API.")
         con = httplib.HTTPSConnection("gdata.youtube.com", 443, timeout=10)
         params = {'v' : 2, 'alt': 'jsonc'}
         data = None
         try:
-            con.request("GET", "/feeds/api/videos/%s?%s" % (v, urllib.urlencode(params)))
+            con.request("GET", "/feeds/api/videos/%s?%s" % (vid, urllib.urlencode(params)))
             data = json.loads(con.getresponse().read())
-            #self.logger.debug(data)
         except Exception as e:
             # Many things can go wrong with an HTTP request or during JSON parsing
             self.logger.info("Error retrieving Youtube API information.")
@@ -1532,6 +1570,15 @@ class SynchtubeClient(object):
             con.close()
             return data
 
+    def _sqlInsertVideo(self, v, title, dur):
+        if str(v.uid) == self.userid: return
+        vi = v.vidinfo
+        self.db_logger.debug("Inserting %s into videos", (vi.site, vi.vid, dur * 1000, title))
+        self.db_logger.debug("Inserting %s into video_stats", (vi.site, vi.vid, v.nick))
+        self.dbclient.execute("INSERT OR IGNORE INTO videos VALUES(?, ?, ?, ?)", (vi.site, vi.vid, dur * 1000, title))
+        self.dbclient.execute("INSERT INTO video_stats VALUES(?, ?, ?)", (vi.site, vi.vid, v.nick))
+        self.dbclient.commit()
+        
     def _lastBans(self, nick, num):
         if not nick == "-all":
             rows = self.dbclient.fetch("SELECT timestamp, reason FROM bans WHERE uname = ? COLLATE NOCASE ORDER BY timestamp DESC LIMIT ?", (nick, num))
@@ -1581,10 +1628,10 @@ class SynchtubeClient(object):
         self.vidlist.append(vid)
         self.vidLock.release()
         if sql:
-            def insert():
-                self._sqlInsertVideo(vid)
-            self.sql_queue.append(insert)
-            self.sqlAction.set()
+            def check():
+                self._validateSQLInsert(vid)
+            self.api_queue.append(check)
+            self.apiAction.set()
 
     def _removeVideo(self, v):
         if self.stthread != threading.currentThread():
