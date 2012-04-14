@@ -6,7 +6,7 @@ import threading
 from multiprocessing import Pipe, Process
 name = "Launcher"
 
-from naoko import SynchtubeClient
+from naoko import Naoko
 from settings import *
 
 # Don't fork too often
@@ -65,17 +65,6 @@ def run(script):
 if __name__ == '__main__':
     try:
         while True:
-            run(SynchtubeClient)
+            run(Naoko)
     except KeyboardInterrupt:
         print "\n Shutting Down"
-"""except IOError, AssertionError: # Windows Python process bug, you get the old code
-    print "Failed to fork a process likely due to bugs in Python for Windows"
-    print "Running Naoko anyway, but she will not automatically restart"
-    try:
-        t = threading.Thread(target=SynchtubeClient)
-        t.daemon=True;
-        t.start()
-        while t.isAlive(): time.sleep(TIMEOUT)
-        print '\n Shutting Down'
-    except (KeyboardInterrupt):
-        print '\n! Received keyboard interrupt'"""

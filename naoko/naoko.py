@@ -26,10 +26,13 @@ import ConfigParser
 import random
 from datetime import datetime
 import code
-import repl
 
+from lib.repl import Repl
 from settings import *
-from database import NaokoDB
+from lib.database import NaokoDB
+from lib.sioclient import SocketIOClient
+from lib.ircclient import IRCClient
+from lib.apiclient import APIClient
 
 eight_choices = [
     "It is certain",
@@ -53,184 +56,6 @@ eight_choices = [
     "Outlook not so good",
     "Very doubtful"]
 
-# Implementation of WebSocket client as per draft-ietf-hybi-thewebsocketprotocol-00
-# http://tools.ietf.org/html/draft-ietf-hybi-thewebsocketprotocol-00
-class WebSocket(object):
-    version = 0
-    # Socket states
-    _DISCONNECTED = 0
-    _CONNECTING = 1
-    _CONNECTED  = 2
-
-    def __init__(self, host, port, resource, origin=None):
-        if not origin:
-            origin = "http://" + host
-        self.host = host
-        self.port = port
-        self.value = ''
-        self.resource = resource
-        self.origin = origin
-        self.state  = self._DISCONNECTED
-        self.fields = {}
-        self.field = ''
-        self.last_byte = 0
-        self.logger =logging.getLogger("websocket")
-        self.logger.setLevel(logLevel)
-        self.pkt_logger =logging.getLogger("websocket.pkt")
-        self.pkt_logger.setLevel(logLevel)
-        self.closing = False
-
-    def handle_read(self):
-        if state == self._CONNECTING:
-            data = self.recv(1)
-            if data == "\n":
-                if self.last_byte == "\r":
-                    self.fields[field] = value
-                    self.field = ''
-                    self.value = ''
-                else:
-                    self.logger.warn("Invalid Newline")
-            elif data == ":":
-                self.field = value
-                self.value = ''
-            else:
-                value += data
-            last_byte = data
-        self.logger.debug(repr(data))
-
-    def _makeHeaders(self, key1, key2):
-        self.headers = {'Upgrade'            : 'WebSocket',
-                        'Connection'         : 'Upgrade',
-                        'Host'               : self.host + ":" + str(self.port),
-                        'Origin'             : self.origin,
-                        'Sec-WebSocket-Key1' : key1,
-                        'Sec-WebSocket-Key2' : key2}
-        return self.headers
-
-    def send(self, data):
-        frame = '\x00' + data + '\xff'
-        self.pkt_logger.debug("Sending frame: %r", frame)
-        self.sock.sendall(frame)
-
-    def createSecretKey(self):
-        self.state = self._CONNECTING
-        spaces = random.randint(1,12)
-        max   = (2**32-1)/spaces
-        number = random.randint(1, max+1)
-        product = spaces * number
-        key     = list(str(product))
-        randomChrs = []
-        #21. Insert between one and twelve random characters from the ranges
-        #    U+0021 to U+002F and U+003A to U+007E into /key_1/ at random
-        #    positions.
-        for x in range(0x21,0x2F+1) + range(0x3A,0x7E+1):
-            randomChrs.append(unichr(x))
-        randomCnt = random.randint(1,12)
-
-        for j in xrange(randomCnt):
-            pos = random.randint(0, len(key)-1)
-            key.insert(pos, random.choice(randomChrs))
-
-        for j in xrange(spaces):
-            pos = random.randint(1, len(key)-2)
-            key.insert(pos, ' ')
-        key = ''.join(key)
-        return (number, key)
-
-    def processFields(self):
-        heading = ''
-        value = []
-        field = ''
-
-        #Process response heading
-        c = self.sock.recv(1)
-        while c != "\n":
-            heading += c
-            c = self.sock.recv(1)
-        self.logger.debug("Received response %s", heading)
-        self.logger.debug("Processing Fields")
-        while True:
-            c = self.sock.recv(1)
-            if c == "\n":
-                if value[-1] == "\r":
-                    value.pop()
-                    self.fields[field] = "".join(value)
-                    if len(value) == 0:
-                        self.logger.debug("Received fields: ", self.fields)
-                        return
-                    field = ''
-                    value = []
-                else:
-                    self.logger.warn("Invalid Newline")
-            elif c == " " and value[-1] == ":":
-                value.pop()
-                field = "".join(value)
-                value = []
-            else:
-                value.append(c)
-
-    def handshake(self):
-        (number1, key1) = self.createSecretKey()
-        (number2, key2) = self.createSecretKey()
-        number3 = random.getrandbits(63)
-        key3    = struct.pack(">q", number3);
-        headers = self._makeHeaders(key1, key2)
-        headers_str = ""
-        for k in headers.keys():
-            headers_str += "%s: %s\r\n" % (k, headers[k])
-        headers_str += "\r\n"
-        get_str = "GET " + self.resource + " HTTP/1.1\r\n"
-
-        self.logger.info("Connecting to %s", self.host)
-        self.sock = sock = socket.socket()
-        sock.settimeout(TIMEOUT)
-        sock.connect((self.host, self.port))
-
-        self.pkt_logger.debug("Sending %s", get_str)
-        sock.sendall(get_str)
-
-        self.pkt_logger.debug("Sending %s", headers_str)
-        sock.sendall(headers_str)
-
-        self.pkt_logger.debug("Sending key3: %s", repr(key3))
-        sock.sendall(key3)
-
-        self.processFields();
-
-        actual = sock.recv(16)
-        challenge = struct.pack('>IIq',number1,number2, number3)
-        expected  = hashlib.md5(challenge).digest()
-        assert repr(actual) == repr(expected), "Challenged failed. \n\tExpected: %s\n\tActual: %s" %(repr(actual), repr(expected))
-        self.logger.info("Connected to %s", self.host)
-
-    def readFrame(self):
-        frame_type = self.sock.recv(1)
-        if len(frame_type) is 0:
-            raise Exception("Socket closed")
-        frame_type = ord(frame_type)
-        if (frame_type & 0x80) == 0x80: # Special frame type?
-            raise Exception("No clue")
-        frame = []
-        while not self.closing:
-            c = self.sock.recv(1)
-            if c == '\xff':
-                frame = "".join(frame)
-                self.pkt_logger.debug("Received frame: %r", frame)
-                return frame
-            else:
-                # Filter out invalid characters
-                if ord(c) > 31 and ord(c) != 127:
-                    frame.append(c)
-        else:
-            self.sock.close()
-
-    def recvFrame(self):
-        return self.readFrame()
-
-    def close(self):
-        self.sock.settimeout(0)
-        self.closing = True
-
 # Simple Record Types for variable synchtube constructs
 SynchtubeUser = namedtuple('SynchtubeUser',
                            ['sid', 'nick', 'uid', 'auth', 'ava', 'lead', 'mod', 'karma', 'msgs', 'nickChange'])
@@ -241,158 +66,9 @@ SynchtubeVidInfo = namedtuple('SynchtubeVidInfo',
 SynchtubeVideo = namedtuple('SynchtubeVideo',
                               ['vidinfo', 'v_sid', 'uid', 'nick'])
 
-# SocketIO "client" built on top of a raw underlying WebSocket
-# Implemented as per https://github.com/LearnBoost/socket.io-spec
-class SocketIOClient(object):
-    protocol = 1
-
-    # Socket IO Message types. There are more, but these are the bare minimum.
-    HEARTBEAT = "2"
-    MESSAGE   = "3"
-
-    def __init__(self, host, port, resource="socket.io", params={}, https=False):
-        self.host = host
-        self.port = port
-        self.resource = resource
-        self.params = params
-        self.logger = logging.getLogger("socketio")
-        self.logger.setLevel(logLevel)
-        self.pkt_logger = logging.getLogger("socketio.pkt")
-        self.pkt_logger.setLevel(logLevel)
-        self.ip = socket.gethostbyname(socket.gethostname())
-        self.sched = sched.scheduler(time.time, time.sleep)
-        self.heartBeatEvent = False
-        if https:
-            self.proto = "https://"
-        else:
-            self.proto = "http://"
-        self.url = "%s%s:%s/%s/%s/?%s" % (self.proto,
-                                          host,
-                                          port,
-                                          resource,
-                                          self.protocol,
-                                          urllib.urlencode(params))
-        self.hbthread = threading.Thread(target=SocketIOClient._heartbeat, args=[self])
-
-    def _heartbeat(self):
-        self.sendHeartBeat(5)
-        self.sched.run()
-
-    def __getSessionInfo(self):
-        stinfo = urllib.urlopen(self.url).read()
-        self.sock_info = dict(zip(['sid', 'hb', 'to', 'xports'],
-                                  urllib.urlopen(self.url).read().split(':')))
-        self.sid = self.sock_info['sid']
-        return self.sid
-
-    def close(self):
-        if self.heartBeatEvent:
-            self.sched.cancel(self.heartBeatEvent)
-            self.logger.info ("Heartbeats Stopped")
-        self.ws.close()
-
-
-    def send(self, msg_type=3, sock_id='', end_pt='', data=''):
-        buf = "%s:%s:%s:%s" % (msg_type, sock_id, end_pt, data)
-        #self.pkt_logger.debug("Sending %s", buf)
-        self.ws.send(buf)
-
-    def sendHeartBeat(self, next_sec=None):
-        if next_sec:
-            self.heartBeatEvent = self.sched.enter(next_sec, 1, SocketIOClient.sendHeartBeat, [self, next_sec])
-        if not self.ws:
-            raise Exception("No WebSocket")
-        now = time.time()
-        hb_diff = now - self.last_hb
-        self.pkt_logger.debug("Time since last heartbeat %.3f", hb_diff)
-        if hb_diff > TIMEOUT:
-            raise Exception("Socket.IO Timeout, %.3f since last heartbeat" % (hb_diff))
-        self.send(2)
-        self.send(3, data='{}')
-
-    def connect(self):
-        sid =  self.__getSessionInfo()
-        self.logger.debug("Received session ID: %s", sid)
-        sock_resource = "/%s/%s/%s/%s?%s" % ("socket.io",
-                                             1,
-                                             "websocket",
-                                             sid,
-                                             urllib.urlencode(self.params))
-        self.ws = WebSocket(self.host, self.port, sock_resource)
-        self.ws.handshake()
-        self.last_hb = time.time()
-        self.hbthread.start()
-
-    def recvMessage(self):
-        while True:
-            frame = self.ws.recvFrame()
-            (msg_type, data) =  self.processFrame(frame)
-            if msg_type == self.MESSAGE:
-                return data
-
-    def processFrame(self, frame):
-        frame = frame.split(':', 3)
-        msg_type = frame[0]
-        if len(frame) > 3:
-            data = frame[3]
-        else:
-            data = None
-        if msg_type == self.HEARTBEAT:
-            self.last_hb = time.time()
-            self.sendHeartBeat()
-        return (msg_type, data)
-
 # Generic object that can be assigned attributes
 class Object(object):
     pass
-
-#Basic IRC client
-#Built upon the instructions provided by http://wiki.shellium.org/w/Writing_an_IRC_bot_in_Python
-class IRCClient(object):
-    def __init__ (self, server, channel, nick, pw):
-        # NOTE: Doesn't currently confirm any joins, nick changes, or identifies
-        # If an IRC name is set and this fails, the entire bot will restart
-        # IRC pings can be unpredictable, so a timeout (except when closing) isn't practical
-        self.logger = logging.getLogger("ircclient")
-        self.logger.setLevel(logLevel)
-        self.loggedIn = False
-        self.inChannel = False
-        self.server = server
-        self.channel = channel
-        self.nick = nick
-
-        #self.logger.debug ("%s %s %s %s", self.server, self.channel, self.nick, pw)
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.connect((self.server, 6667)) # Here we connect to the server using port 6667
-        self.send("USER "+ self.nick +" "+ self.nick +" "+ self.nick +" :"+ self.nick +"\n") # user authentication
-        self.send("NICK "+ self.nick +"\n") # here we actually assign the nick to the bot
-        if pw:
-            self.send ("PRIVMSG nickserv :id " + pw + "\n")
-        self.send ("JOIN " + self.channel + "\n")
-
-    def ping (self):
-        self.send ("PONG :pingis\n")
-
-    def close (self):
-        self.sock.settimeout(0)
-        self.send ("QUIT :quit\n")
-        self.sock.close()
-
-    def sendMsg (self, msg):
-        self.send("PRIVMSG " + self.channel + " :" + msg + "\n")
-
-    def recvMessage (self):
-        frame = self.sock.recv(4096)
-        if len(frame) == 0:
-            raise Exception("IRC Socket closed")
-        frame = frame.strip("\n\r")
-        self.logger.debug ("Received IRC Frame %r", frame)
-        return frame
-
-    def send (self, msg):
-        self.logger.debug ("IRC Send %r", msg.encode("utf-8"))
-        self.sock.send (msg.encode("utf-8"))
-
 
 # Synchtube  "client" built on top of a socket.io socket
 # Synchtube messages are generally of the form:
@@ -403,7 +79,7 @@ class IRCClient(object):
 # (uid 22262). The first field is the session identifier,
 # second is uid, third is whether or not client is authenticated
 # fourth is avatar type, and so on.
-class SynchtubeClient(object):
+class Naoko(object):
     _ST_IP = "173.255.204.78"
     _HEADERS = {'User-Agent' : 'NaokoBot',
                 'Accept' : 'text/html,application/xhtml+xml,application/xml;',
@@ -518,24 +194,26 @@ class SynchtubeClient(object):
         self.sql_queue = deque(maxlen=0)
         self.api_queue = deque()
 
-        self.chatthread = threading.Thread (target=SynchtubeClient._chatloop, args=[self])
+        self.apiclient = APIClient(self.apikeys)
+
+        self.chatthread = threading.Thread (target=Naoko._chatloop, args=[self])
         self.chatthread.start()
 
-        self.stthread = threading.Thread (target=SynchtubeClient._stloop, args=[self])
+        self.stthread = threading.Thread (target=Naoko._stloop, args=[self])
         self.stthread.start()
 
-        self.playthread = threading.Thread (target=SynchtubeClient._playloop, args=[self])
+        self.playthread = threading.Thread (target=Naoko._playloop, args=[self])
         self.playthread.start()
 
-        self.apithread = threading.Thread (target=SynchtubeClient._apiloop, args=[self])
+        self.apithread = threading.Thread (target=Naoko._apiloop, args=[self])
         self.apithread.start()
 
         if self.irc_nick:
-            self.ircthread = threading.Thread(target=SynchtubeClient._ircloop, args=[self])
+            self.ircthread = threading.Thread(target=Naoko._ircloop, args=[self])
             self.ircthread.start()
 
         if self.dbfile:
-            self.sqlthread = threading.Thread(target=SynchtubeClient._sqlloop, args=[self])
+            self.sqlthread = threading.Thread(target=Naoko._sqlloop, args=[self])
             self.sqlthread.start()
 
         # Start a REPL on port 5001. Only accept connections from localhost
@@ -544,7 +222,7 @@ class SynchtubeClient(object):
         # the logger will still go to the the launching terminals
         # stdout/stderr, however print statements will probably be rerouted
         # to the socket.
-        self.repl = repl.Repl(port=5001, host='localhost', locals={'naoko': self})
+        self.repl = Repl(port=5001, host='localhost', locals={'naoko': self})
 
         while not self.closing.wait(5):
             # Sleeping first lets everything get initialized
@@ -626,7 +304,7 @@ class SynchtubeClient(object):
                 # Failed to send to the channel
                 elif data.find("404 " + self.irc_nick + " " + self.channel +" :Cannot send to channel") != -1:
                     failCount += 1
-                    self.irc_logger.debug("Failed to sent to channel %d times" % (failCount))
+                    self.irc_logger.debug("Failed to send to channel %d times" % (failCount))
                     if failCount > 4:
                         self.irc_logger.info("Could not send to %s %d times, restarting" % (self.channel, failCount))
                         self.sendChat("Failed to send messages to the IRC channel %d times, check my configuration file." % (failCount))
@@ -711,6 +389,11 @@ class SynchtubeClient(object):
                 self.nextVideo()
                 self.state.state = -1
                 sleepTime = 60
+            if self.state.state == -2:
+                self.enqueueMsg(self.state.current)
+                self.nextVideo()
+                self.state.state = -1
+                sleepTime = 60
             # If the video is paused, unpause it
             if self.state.state == 2:
                 unpause = 0
@@ -784,7 +467,8 @@ class SynchtubeClient(object):
                          "s"                : self.changeState,
                          "playlist"         : self.playlist,
                          "shuffle"          : self.shuffle,
-                         "initdone"         : self.ignore}
+                         "initdone"         : self.ignore,
+                         "clear"            : self.clear}
 
     def _initCommandHandlers(self):
         self.commandHandlers = {"restart"           : self.restart,
@@ -818,7 +502,7 @@ class SynchtubeClient(object):
         if videoIndex == None:
             videoIndex = -1
         if len (self.vidlist) == 0:
-            self.sendChat("Video list is empty, restarting")
+            self.sendChat("Video list is empty, restarting.")
             self.close()
         videoIndex = (videoIndex + 1) % len(self.vidlist)
         if len(self.vidlist) > 1:
@@ -960,14 +644,32 @@ class SynchtubeClient(object):
         self._moveVideo(data["id"], after)
 
     def changeMedia(self, tag, data):
-        self.state.current = None
-        self.playerAction.set()
-        self.logger.info("Ignoring cm (change media) message: %s" % (data))
+        self.logger.info("Change media: %s" % (data))
+        self.state.current = data[0]
+        self.state.previous = None
+        # By default wait for a very long time
+        # This prevents her from skipping something she does not recognize, like a livestream
+        # HOWEVER, this will require a mod to tell her to skip
+        self.state.dur = 9999999
+        v = data [1]
+        v.append(None)
+        v.append(None)
+        v = v[:len(SynchtubeVidInfo._fields)]
+        v[2] = self.filterString(v[2])[1]
+        vi = SynchtubeVidInfo(*v)
+        self.checkVideo(vi)
+        self.changeState(tag, data[2])
 
     def playlist(self, tag, data):
+        self.clear(tag, None)
         for v in data:
             self._addVideo(v, False)
         #self.logger.debug(pprint(self.vidlist))
+
+    def clear(self, tag, data):
+        self.vidLock.acquire()
+        self.vidlist = []
+        self.vidLock.release()
 
     def shuffle(self, tag, data):
         self._shuffle(data)
@@ -975,12 +677,17 @@ class SynchtubeClient(object):
     def changeState(self, tag, data):
         self.logger.debug("State is %s %s", tag, data)
         if data == None:
-            self.state.state = 0
+            # Just assume whatever is loaded is playing correctly
+            if tag == "cm":
+                self.state.state = 1
+            else:
+                self.state.state = 0
             self.state.time = int(round(time.time() * 1000))
         else:
             self.state.state = data[0]
             if self.state.state == 2:
                 self.state.pauseTime = time.time()
+                self.logger.debug("Paused %.3f seconds from the beginning of the video." % (self.state.pauseTime - (self.state.time/1000)))
                 return
             elif len (data) > 1:
                 self.state.time = data[1]
@@ -995,7 +702,7 @@ class SynchtubeClient(object):
         self.state.current = data[1]
         index = self.getVideoIndexById(self.state.current)
         if index == None:
-            self.sendChat("Unexpected video, restarting")
+            self.sendChat("Unexpected video, restarting.")
             self.close()
             return
         self.state.dur = self.vidlist[index].vidinfo.dur
@@ -1277,10 +984,13 @@ class SynchtubeClient(object):
     # Deletes the last video added by the provided user
     def delete(self, command, user, data):
         target = self.filterString(data, True)[1]
-        if not user.mod or target == "":
+        # Non-mods can only delete their own videos
+        # This does prevent unregistered users from deleting their own videos
+        if not user.mod and not target == "": return
+        if target == "":
             target = user.nick
         if user.mod and data.lower() == "-unnamed":
-            target = ''
+            target = ""
         target = target.lower()
         videoIndex = self.getVideoIndexById(self.state.current)
         i = len(self.vidlist) - 1
@@ -1471,7 +1181,7 @@ class SynchtubeClient(object):
 
     def _shuffle(self, data):
         if self.stthread != threading.currentThread():
-            raise Exception("_shuffle should not be called outside the SynchtubeClient thread")
+            raise Exception("_shuffle should not be called outside the Synchtube thread")
         indices = {}
         for i, v in enumerate(self.vidlist):
             indices[v.v_sid] = i
@@ -1493,13 +1203,19 @@ class SynchtubeClient(object):
     # Checks to see if the current youtube video isn't invalid, blocked, or removed
     # Also updates the duration if necessary to prevent certain types of annoying attacks on the room
     def _checkYoutube(self, vid):
-        data = self._getYoutubeVideoInfo(vid)
+        data = self.apiclient.getYoutubeVideoInfo(vid)
         if data:
             title, dur, embed = data
-            if not embed and self.leading.isSet():
+            if not embed:
                 self.logger.debug("Youtube embedding disabled.")
-                self.enqueueMsg("Embedding disabled.")
-                self.nextVideo()
+                if self.leading.isSet():
+                    self.enqueueMsg("Embedding disabled.")
+                    self.nextVideo()
+                else:
+                    # Mark the state as invalid
+                    self.state.state = -2
+                    # Store the reason in current
+                    self.state.current = "Embedding disabled."
             # When someone has manually added a video with an incorrect duration
             elif self.state.dur != dur:
                 self.logger.debug("Duration mismatch: %d expected, %d actual." % (self.state.dur, dur))
@@ -1509,29 +1225,37 @@ class SynchtubeClient(object):
         if self.leading.isSet():
             self.enqueueMsg("Invalid Youtube video.")
             self.nextVideo()
+        else:
+            # Mark the state as invalid
+            self.state.state = -2
+            # Store the reason in current
+            self.state.current = "Invalid Youtube video."
 
-    # Validates a video before inserting it into the database
-    # Will correct invalid durations and titles for youtube videos
-    # This makes SQL inserts dependent on the external API
+    # Validates a video before inserting it into the database.
+    # Will correct invalid durations and titles for youtube videos.
+    # This makes SQL inserts dependent on the external API.
     # TODO -- Maybe -- detect if there's a communication error/timeout and let the insertion go through anyway
-    def _validateSQLInsert(self, v):
+    def _validateVideoSQLInsert(self, v):
+        if str(v.uid) == self.userid: return
         vi = v.vidinfo
         dur = vi.dur
         title = vi.title
         valid = True
         if vi.site == 'yt':
             valid, title, dur = self._validateYoutube(vi)
-        # The video is invalid, don't insert it
         if not valid:
+            # The video is invalid, don't insert it
             self.logger.debug("Invalid video, skipping SQL insert.")
             return
+        # The insert the video using the retrieved title and duration
+        # Trust the external APIs over Synchtube
         def insert():
             self._sqlInsertVideo(v, title, dur)
         self.sql_queue.append(insert)
         self.sqlAction.set()
         
     def _validateYoutube(self, vi):
-        data = self._getYoutubeVideoInfo(vi.vid)
+        data = self.apiclient.getYoutubeVideoInfo(vi.vid)
         # Only accept valid videos with embedding enabled
         if data:
             title, dur, embed = data
@@ -1539,39 +1263,7 @@ class SynchtubeClient(object):
                 return (True, title, dur)
         return (False, None, None)
 
-    # Grab relevant information from a reponse from the Youtube API packed in a tuple
-    # Returns False if there was an error of any kind
-    def _getYoutubeVideoInfo(self, vid):
-        data = self._getYoutubeAPIVidInfo(vid) 
-        if isinstance(data, dict) and not "error" in data:
-            try:
-                data = data["data"]
-                return (data["title"], data["duration"], data["accessControl"]["embed"] == "allowed")
-            except (TypeError, ValueError, KeyError) as e:
-                # Improperly formed youtube api response
-                # Assume broken video and skip it
-                self.logger.info("Invalid Youtube API response.")
-        return False
-
-    # Fetch Youtube API information for a single video and unpack it
-    def _getYoutubeAPIVidInfo(self, vid):
-        self.logger.debug("Retrieving video information from the Youtube API.")
-        con = httplib.HTTPSConnection("gdata.youtube.com", 443, timeout=10)
-        params = {'v' : 2, 'alt': 'jsonc'}
-        data = None
-        try:
-            con.request("GET", "/feeds/api/videos/%s?%s" % (vid, urllib.urlencode(params)))
-            data = json.loads(con.getresponse().read())
-        except Exception as e:
-            # Many things can go wrong with an HTTP request or during JSON parsing
-            self.logger.info("Error retrieving Youtube API information.")
-            self.logger.info(e)
-        finally:
-            con.close()
-            return data
-
     def _sqlInsertVideo(self, v, title, dur):
-        if str(v.uid) == self.userid: return
         vi = v.vidinfo
         self.db_logger.debug("Inserting %s into videos", (vi.site, vi.vid, dur * 1000, title))
         self.db_logger.debug("Inserting %s into video_stats", (vi.site, vi.vid, v.nick))
@@ -1616,7 +1308,7 @@ class SynchtubeClient(object):
     # Add the video described by v
     def _addVideo(self, v, sql=True):
         if self.stthread != threading.currentThread():
-            raise Exception("_addVideo should not be called outside the SynchtubeClient thread")
+            raise Exception("_addVideo should not be called outside the Synchtube thread")
         v[0] = v[0][:len(SynchtubeVidInfo._fields)]
         v[0][2] = self.filterString(v[0][2])[1]
         v[0] = SynchtubeVidInfo(*v[0])
@@ -1629,13 +1321,13 @@ class SynchtubeClient(object):
         self.vidLock.release()
         if sql:
             def check():
-                self._validateSQLInsert(vid)
+                self._validateVideoSQLInsert(vid)
             self.api_queue.append(check)
             self.apiAction.set()
 
     def _removeVideo(self, v):
         if self.stthread != threading.currentThread():
-            raise Exception("_removeVideo should not be called outside the SynchtubeClient thread")
+            raise Exception("_removeVideo should not be called outside the Synchtube thread")
         idx = self.getVideoIndexById (v)
         if idx >= 0:
             self.vidLock.acquire()
@@ -1644,7 +1336,7 @@ class SynchtubeClient(object):
 
     def _moveVideo(self, v, after=None):
         if self.stthread != threading.currentThread():
-            raise Exception("_moveVideo should not be called outside the SynchtubeClient thread")
+            raise Exception("_moveVideo should not be called outside the Synchtube thread")
         self.vidLock.acquire()
         video = self.vidlist.pop(self.getVideoIndexById(v))
         pos = 0
@@ -1675,7 +1367,7 @@ class SynchtubeClient(object):
     # This should _NOT_ be called outside the main SynchtubeClient's thread
     def _leaderActions(self):
         if self.stthread != threading.currentThread():
-            raise Exception("_leaderActions should not be called outside the SynchtubeClient thread")
+            raise Exception("_leaderActions should not be called outside the Synchtube thread")
         while len(self.leader_queue) > 0:
             self.leader_queue.popleft()()
         if self.pendingToss:
@@ -1706,3 +1398,6 @@ class SynchtubeClient(object):
         self.ircpw = config.get('naoko', 'irc_pass')
         self.dbfile = config.get('naoko', 'db_file')
         self.dbinit = config.get('naoko', 'db_init')
+        self.apikeys = Object()
+        self.apikeys.mst_id = config.get('naoko', 'mst_client_id')
+        self.apikeys.mst_secret = config.get('naoko', 'mst_client_secret')
