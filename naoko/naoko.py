@@ -121,8 +121,8 @@ class Naoko(object):
         if self.pw:
             self.logger.info("Attempting to login")
             login_url = "http://www.synchtube.com/user/login"
-            login_body = {'email' : self.name, 'password' : self.pw};
-            login_data = urllib.urlencode(login_body).encode('utf-8')
+            login_body = {'email' : self.name.encode('utf-8'), 'password' : self.pw.encode('utf-8')};
+            login_data = urllib.urlencode(login_body)
             login_req = Request(login_url, data=login_data, headers=self._HEADERS)
             login_req.add_header('X-Requested-With', 'XMLHttpRequest')
             login_req.add_header('Content', 'XMLHttpRequest')
@@ -494,7 +494,9 @@ class Naoko(object):
                                 "delete"            : self.delete,
                                 "lastbans"          : self.lastBans,
                                 "addrandom"         : self.addRandom,
-                                "purge"             : self.purge}
+                                "purge"             : self.purge,
+                                "translate"         : self.translate,
+                                "cleverbot"         : self.cleverbot}
 
     def nextVideo(self):
         self.vidLock.acquire()
@@ -513,7 +515,7 @@ class Naoko(object):
         self.state.time = int(round(time.time() * 1000))
         self.send("s", [2])
         self.send("pm", self.vidlist[videoIndex].v_sid)
-        self.enqueueMsg("Playing: %s" % (self.filterString(self.vidlist[videoIndex].vidinfo.title)[1].decode("utf-8")))
+        self.enqueueMsg("Playing: %s" % (self.filterString(self.vidlist[videoIndex].vidinfo.title)[1]))
         self.vidLock.release()
 
     def disableIRC(self):
@@ -861,10 +863,7 @@ class Naoko(object):
 
     def dice(self, command, user, data):
         if not data: return
-        params = data
-        if type (params) is not str and type(params) is not unicode:
-            params = str(params)
-        params = params.strip().split()
+        params = data.strip().split()
         if len (params) < 2: return
         num = 0
         size = 0
@@ -891,8 +890,10 @@ class Naoko(object):
     # If no name is provided it bumps the last video by the user who sent the command
     def bump(self, command, user, data):
         if not user.mod: return
-        (valid, target) = self.filterString(data, True)
-        if target == "":
+        target = data.strip()
+        if target:
+            target = self.filterString(data, True)[1]
+        else:
             target = user.nick
         target = target.lower()
         videoIndex = self.getVideoIndexById(self.state.current)
@@ -950,9 +951,10 @@ class Naoko(object):
         if not (user.mod or len(self.vidlist) <= 10): return
         num = None
         try:
-            num = int(data)
+            num = int(data.strip())
         except (TypeError, ValueError) as e:
             self.logger.debug (e)
+        # Default to 5, which is also the most non-mods can add at once 
         if num is None:
             num = 5
         if num > 20 or (not user.mod and num > 5): return
@@ -1055,10 +1057,7 @@ class Naoko(object):
 
     def choose(self, command, user, data):
         if not data: return
-        choices = data
-        if type (choices) is not str and type(choices) is not unicode:
-            choices = str(choices)
-        choices = choices.strip()
+        choices = data.strip()
         if len (choices) == 0: return
         self.enqueueMsg("[Choose: %s] %s" % (choices, random.choice(choices.split())))
 
@@ -1067,40 +1066,52 @@ class Naoko(object):
 
     def ask(self, command, user, data):
         if not data: return
-        question = data
-        if type (question) is not str and type(question) is not unicode:
-            question = str(question)
-        question = question.strip()
+        question = data.strip()
         if len (question) == 0: return
         self.enqueueMsg("[%s] %s" % (question, random.choice(["Yes", "No"])))
 
     def eightBall(self, command, user, data):
         if not data: return
-        question = data
-        if type (question) is not str and type(question) is not unicode:
-            question = str(question)
-        question = question.strip()
+        question = data.strip()
         if len (question) == 0: return
         self.enqueueMsg("[8ball %s] %s" % (user.nick, random.choice(eight_choices)))
 
+    # Kick a single user by their name.
+    # Two special arguments -unnamed and -unregistered.
+    # Those commands kick all unnammed and unregistered users. 
     def kick(self, command, user, data):
-        if not user.mod: return
+        if not user.mod or not data: return
         args = data.split(' ', 1)
 
         if args[0].lower() == "-unnamed":
             kicks = []
             for u in self.userlist:
                 if self.userlist[u].nick == "unnamed":
-                    kicks.append(self.userlist[u].sid)
+                    kicks.append(u)
             def kickUsers():
                 for k in kicks:
                     self._kickUser(k, sendMessage=False)
+            self.logger.info("Kicking %d unnamed users requested by %s", len(kicks), user.nick)
+            self.asLeader(kickUsers)
+            return
+
+        if args[0].lower() == "-unregistered":
+            kicks = []
+            for u in self.userlist:
+                # Synchtube doesn't properly set user.auth in some cases.
+                # A more reliable method without false positives is user.uid.
+                if self.userlist[u].uid == None:
+                    kicks.append(u)
+            def kickUsers():
+                for k in kicks:
+                    self._kickUser(k, sendMessage=False)
+            self.logger.info("Kicking %d unregistered users requested by %s", len(kicks), user.nick)
             self.asLeader(kickUsers)
             return
 
         target = self.getUserByNick(args[0])
         if not target or target.mod: return
-        self.logger.info ("Kick Target %s Requestor %s", target, user)
+        self.logger.info ("Kick Target %s Requestor %s", target.nick, user.nick)
         if len(args) > 1:
             def kickUser():
                 self._kickUser(target.sid, args[1], False)
@@ -1111,7 +1122,7 @@ class Naoko(object):
             self.asLeader(kickUser)
 
     def ban(self, command, user, data):
-        if not user.mod: return
+        if not user.mod or not data: return
         args = data.split(' ', 1)
         target = self.getUserByNick(args[0])
         if not target or target.mod: return
@@ -1125,9 +1136,39 @@ class Naoko(object):
                 self._banUser(target.sid)
             self.asLeader(banUser)
 
+    def cleverbot(self, command, user, data):
+        text = data.strip()
+        if text:
+            def clever():
+                self.enqueueMsg("[%s] %s" % (user.nick, self.apiclient.cleverbot(text)))
+            self.api_queue.append(clever)
+            self.apiAction.set()
+
+    # Translate a given string.
+    # Defaults to translating to English and detecting the source language.
+    # If the string starts with [src->dst], [src>dst], or [dst] where src and dst
+    # are ISO two letter language code it will attempt to translate using those codes.
+    def translate(self, command, user, data):
+        m = re.match("^(\[(([a-zA-Z]{2})|([a-zA-Z]{2})-?>([a-zA-Z]{2}))\] ?)?(.+)$", data.strip())
+        if not m: return
+        g = m.groups()
+        src = g[3] or None
+        dst = g[2] or g[4] or "en"
+        def trans():
+            out = self.apiclient.translate(g[5], src, dst)
+            if out:
+                if not out == -1:
+                    self.enqueueMsg("[%s] %s" % (dst.lower(), out))
+            else:
+                self.enqueueMsg("Translate Query Failed")
+        self.api_queue.append(trans)
+        self.apiAction.set()
+
+    # Two functions that search the lists in an efficient manner
+
     def getUserByNick(self, nick):
         name = self.filterString(nick, True)[1].lower()
-        try: return self.userlist[(i for i in self.userlist if self.userlist[i].nick.lower() == name).next()]
+        try: return (u for u in self.userlist.itervalues() if u.nick.lower() == name).next()
         except StopIteration: return None
 
     def getVideoIndexById(self, vid):
@@ -1159,7 +1200,7 @@ class Naoko(object):
             valid = o > 31 and o != 127 and not (o >= 0xd800 and o <= 0xdfff) and o <= 0xffff
             if (not isNick) and valid:
                 output.append(c)
-        return (len(output) == len(value) and len , "".join(output).encode('utf-8'))
+        return (len(output) == len(value) and len , "".join(output))
 
     # The following private API methods are fairly low level and work with
     # synchtube sid's (session ids) or raw data arrays. They will usually

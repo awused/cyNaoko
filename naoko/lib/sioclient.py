@@ -16,9 +16,8 @@ import random
 import sched, time
 import socket
 import struct
-import urllib
 import threading
-from urllib2 import Request, urlopen
+from urllib import urlopen, urlencode
 
 from settings import *
 
@@ -230,7 +229,7 @@ class SocketIOClient(object):
                                           port,
                                           resource,
                                           self.protocol,
-                                          urllib.urlencode(params))
+                                          urlencode(params))
         self.hbthread = threading.Thread(target=SocketIOClient._heartbeat, args=[self])
 
     def _heartbeat(self):
@@ -238,9 +237,9 @@ class SocketIOClient(object):
         self.sched.run()
 
     def __getSessionInfo(self):
-        stinfo = urllib.urlopen(self.url).read()
+        stinfo = urlopen(self.url).read()
         self.sock_info = dict(zip(['sid', 'hb', 'to', 'xports'],
-                                  urllib.urlopen(self.url).read().split(':')))
+                                  urlopen(self.url).read().split(':')))
         self.sid = self.sock_info['sid']
         return self.sid
 
@@ -276,7 +275,7 @@ class SocketIOClient(object):
                                              1,
                                              "websocket",
                                              sid,
-                                             urllib.urlencode(self.params))
+                                             urlencode(self.params))
         self.ws = WebSocket(self.host, self.port, sock_resource)
         self.ws.handshake()
         self.last_hb = time.time()
