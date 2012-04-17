@@ -709,7 +709,6 @@ class Naoko(object):
             if self.state.state == 2:
                 self.state.pauseTime = time.time()
                 self.logger.debug("Paused %.3f seconds from the beginning of the video." % (self.state.pauseTime - (self.state.time/1000)))
-                return
             elif len (data) > 1:
                 self.state.time = data[1]
             else:
