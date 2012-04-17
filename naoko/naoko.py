@@ -58,7 +58,7 @@ eight_choices = [
 
 # Simple Record Types for variable synchtube constructs
 SynchtubeUser = namedtuple('SynchtubeUser',
-                           ['sid', 'nick', 'uid', 'auth', 'ava', 'lead', 'mod', 'karma', 'msgs', 'nickChange'])
+                           ['sid', 'nick', 'uid', 'auth', 'ava', 'lead', 'mod', 'karma', 'msgs', 'nickChanges'])
 
 SynchtubeVidInfo = namedtuple('SynchtubeVidInfo',
                             ['site', 'vid', 'title', 'thumb', 'dur'])
@@ -601,12 +601,31 @@ class Naoko(object):
 
     # Checks the currently playing video against a provided API
     def checkVideo(self, vidinfo):
+        if not self.checkVideoId(vidinfo):
+            self.invalidVideo("Invalid video ID.")
+            return
+            
         # Only handles youtube right now
-        if vidinfo.site == 'yt':
-            def checkYoutube():
-                self._checkYoutube(vidinfo.vid)
-            self.api_queue.append(checkYoutube)
+        def check():
+            reason = "OKAY"
+            if vidinfo.site == "yt":
+                reason = self._checkYoutube(vidinfo.vid) or reason
+            if reason != "OKAY":
+                self.invalidVideo(reason)
+        self.api_queue.append(check)
         self.apiAction.set()
+
+    # Skips the current invalid video if she is leading.
+    # Otherwise saves that information for if she does take lead.
+    def invalidVideo(self, reason):
+        if self.leading.isSet():
+            self.enqueueMsg(reason)
+            self.nextVideo()
+        else:
+            # Mark the state as invalid
+            self.state.state = -2
+            # Store the reason in current
+            self.state.current = reason 
 
     # Kicks a user for something they did in chat
     # Tracks kicks by username for a three strikes policy
@@ -718,26 +737,27 @@ class Naoko(object):
     def nick(self, tag, data):
         sid = data[0]
         (valid, nick) = self.filterString(data[1], True)
-        self.logger.debug("%s nick: %s (was: %s)", sid, nick, self.userlist[sid].nick)
+        oldnick = self.userlist[sid].nick
+        self.logger.debug("%s nick: %s (was: %s)", sid, nick, oldnick)
         self.userlist[sid]= self.userlist[sid]._replace(nick=nick)
         if not valid:
             self.nameBan(sid)
             return
 
         user = self.userlist[sid]
-        if user.nickChange:
+        if user.nickChanges > 3 or (user.nickChanges > 0 and not nick == oldnick):
             if self.pending.has_key(sid) or user.mod or user.sid == self.sid:
                 return
             else:
                 # Only a script/bot can change nicks multiple times
                 self.pending[sid] = True
-                self.logger.info("Attempted ban of %s for multiple nick changes", user.nick)
-                reason = "%s changed names multiple times" % (user.nick)
+                self.logger.info("Attempted ban of %s for %d nick changes", (user.nick, user.nickChanges))
+                reason = "%s changed names %d times" % (user.nick, user.nickChanges)
                 def banUser():
                     self._banUser(sid, reason)
                 self.asLeader(banUser)
         else:
-            self.userlist[sid] = self.userlist[sid]._replace(nickChange=True)
+            self.userlist[sid] = user._replace(nickChanges=user.nickChanges+1)
 
     def addUser(self, tag, data):
         # add_user and users data are similar aside from users having
@@ -811,11 +831,11 @@ class Naoko(object):
         user.msgs.append(time.time())
         span = user.msgs[-1] - user.msgs[0]
         if span < self.spam_interval * user.msgs.maxlen and len(user.msgs) == user.msgs.maxlen:
-            self.logger.info("Attempted kick of %s for spam", user.nick)
+            self.logger.info("Attempted kick/ban of %s for spam", user.nick)
             reason = "%s sent %d messages in %1.3f seconds" % (user.nick, len(user.msgs), span)
             self.chatKick(user, reason)
         elif re.search(r"(synchtube\.com\/r|synchtu\.be\/)", msg): 
-            self.logger.info("Attempted kick of %s for blacklisted phrase", user.nick)
+            self.logger.info("Attempted kick/ban of %s for blacklisted phrase", user.nick)
             reason = "%s sent a blacklisted message" % (user.nick)
             self.chatKick(user, reason)
     
@@ -1202,6 +1222,18 @@ class Naoko(object):
                 output.append(c)
         return (len(output) == len(value) and len , "".join(output))
 
+    # Returns whether or not a video id could possibly be valid
+    # Guards against possible attacks and annoyances
+    def checkVideoId(self, vi):
+        if type (vi.vid) is not str and type(vi.vid) is not unicode:
+            return False
+        if vi.site == "yt":
+            return re.match("^[A-Za-z0-9\-_]+$", vi.vid)
+        elif vi.site == "dm" or vi.site == "sc" or vi.site == "vm":
+            return re.match("^[0-9]+$", vi.vid)
+        else:
+            return True
+
     # The following private API methods are fairly low level and work with
     # synchtube sid's (session ids) or raw data arrays. They will usually
     # Fire off a synchtube message without any validation. Higher-level
@@ -1216,7 +1248,7 @@ class Naoko(object):
         userinfo = dict(userinfo)
         userinfo['nick'] = self.filterString(userinfo['nick'], True)[1]
         userinfo['msgs'] = deque(maxlen=3)
-        userinfo['nickChange'] = False
+        userinfo['nickChanges'] = 0
         user = SynchtubeUser(**userinfo)
         self.userlist[user.sid] = user
 
@@ -1249,28 +1281,14 @@ class Naoko(object):
             title, dur, embed = data
             if not embed:
                 self.logger.debug("Youtube embedding disabled.")
-                if self.leading.isSet():
-                    self.enqueueMsg("Embedding disabled.")
-                    self.nextVideo()
-                else:
-                    # Mark the state as invalid
-                    self.state.state = -2
-                    # Store the reason in current
-                    self.state.current = "Embedding disabled."
+                return "Embedding disabled." 
             # When someone has manually added a video with an incorrect duration
             elif self.state.dur != dur:
                 self.logger.debug("Duration mismatch: %d expected, %d actual." % (self.state.dur, dur))
                 self.state.dur = dur
                 self.playerAction.set()
-            return
-        if self.leading.isSet():
-            self.enqueueMsg("Invalid Youtube video.")
-            self.nextVideo()
-        else:
-            # Mark the state as invalid
-            self.state.state = -2
-            # Store the reason in current
-            self.state.current = "Invalid Youtube video."
+            return ""
+        return "Invalid Youtube video."
 
     # Validates a video before inserting it into the database.
     # Will correct invalid durations and titles for youtube videos.
@@ -1281,9 +1299,11 @@ class Naoko(object):
         vi = v.vidinfo
         dur = vi.dur
         title = vi.title
-        valid = True
-        if vi.site == 'yt':
-            valid, title, dur = self._validateYoutube(vi)
+        valid = self.checkVideoId(vi)
+
+        if valid:
+            if vi.site == 'yt':
+                valid, title, dur = self._validateYoutube(vi)
         if not valid:
             # The video is invalid, don't insert it
             self.logger.debug("Invalid video, skipping SQL insert.")
