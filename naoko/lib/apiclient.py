@@ -86,7 +86,7 @@ class APIClient(object):
                 data = "Cleverbot is too busy."
             else:
                 data = data.split("\r")
-                self.clever.update(((k,v) for k, v in zip (cleverbot_response_keys, data) if k))
+                self.clever.update(((k,v) for k, v in zip(cleverbot_response_keys, data) if k))
                 data = self.clever["stimulus"]
         except Exception as e:
             self.logger.warning("Cleverbot Error")

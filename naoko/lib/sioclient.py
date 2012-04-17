@@ -246,7 +246,7 @@ class SocketIOClient(object):
     def close(self):
         if self.heartBeatEvent:
             self.sched.cancel(self.heartBeatEvent)
-            self.logger.info ("Heartbeats Stopped")
+            self.logger.info("Heartbeats Stopped")
         self.ws.close()
 
 

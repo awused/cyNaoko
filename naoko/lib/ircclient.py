@@ -17,7 +17,7 @@ from settings import *
 #Basic IRC client
 #Built upon the instructions provided by http://wiki.shellium.org/w/Writing_an_IRC_bot_in_Python
 class IRCClient(object):
-    def __init__ (self, server, channel, nick, pw):
+    def __init__(self, server, channel, nick, pw):
         # NOTE: Doesn't currently confirm any joins, nick changes, or identifies
         # If an IRC name is set and this fails, the entire bot will restart
         # IRC pings can be unpredictable, so a timeout (except when closing) isn't practical
@@ -35,28 +35,28 @@ class IRCClient(object):
         self.send("USER "+ self.nick +" "+ self.nick +" "+ self.nick +" :"+ self.nick +"\n") # user authentication
         self.send("NICK "+ self.nick +"\n") # here we actually assign the nick to the bot
         if pw:
-            self.send ("PRIVMSG nickserv :id " + pw + "\n")
-        self.send ("JOIN " + self.channel + "\n")
+            self.send("PRIVMSG nickserv :id " + pw + "\n")
+        self.send("JOIN " + self.channel + "\n")
 
-    def ping (self):
-        self.send ("PONG :pingis\n")
+    def ping(self):
+        self.send("PONG :pingis\n")
 
-    def close (self):
+    def close(self):
         self.sock.settimeout(0)
-        self.send ("QUIT :quit\n")
+        self.send("QUIT :quit\n")
         self.sock.close()
 
-    def sendMsg (self, msg):
+    def sendMsg(self, msg):
         self.send("PRIVMSG " + self.channel + " :" + msg + "\n")
 
-    def recvMessage (self):
+    def recvMessage(self):
         frame = self.sock.recv(4096)
         if len(frame) == 0:
             raise Exception("IRC Socket closed")
         frame = frame.strip("\n\r")
-        self.logger.debug ("Received IRC Frame %r", frame)
+        self.logger.debug("Received IRC Frame %r", frame)
         return frame
 
-    def send (self, msg):
-        self.logger.debug ("IRC Send %r", msg.encode("utf-8"))
-        self.sock.send (msg.encode("utf-8"))
+    def send(self, msg):
+        self.logger.debug("IRC Send %r", msg.encode("utf-8"))
+        self.sock.send(msg.encode("utf-8"))

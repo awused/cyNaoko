@@ -66,6 +66,8 @@ SynchtubeVidInfo = namedtuple('SynchtubeVidInfo',
 SynchtubeVideo = namedtuple('SynchtubeVideo',
                               ['vidinfo', 'v_sid', 'uid', 'nick'])
 
+IRCUser = namedtuple('IRCUser', ["nick", "mod"])
+
 # Generic object that can be assigned attributes
 class Object(object):
     pass
@@ -128,10 +130,10 @@ class Naoko(object):
             login_req.add_header('Content', 'XMLHttpRequest')
             login_res  = urlopen(login_req)
             login_res_headers = login_res.info()
-            if(login_res_headers['Status'][:3] != '200'):
+            if login_res_headers['Status'][:3] != '200':
                 raise Exception("Could not login")
 
-            if(login_res_headers.has_key('Set-Cookie')):
+            if login_res_headers.has_key('Set-Cookie'):
                 self._HEADERS['Cookie'] = login_res_headers['Set-Cookie']
             self.logger.info("Login successful")
         room_req = Request("http://www.synchtube.com/r/%s" % (self.room), headers=self._HEADERS)
@@ -155,13 +157,13 @@ class Naoko(object):
 
         try:
             self.logger.info("Obtaining session ID")
-            if(config['room'].has_key('port')):
+            if config['room'].has_key('port'):
                 self.port = config['room']['port']
             self.port = int(self.port)
             self.config_params = {'b' : self.st_build,
                                   'r' : config['room']['id'],
                                   'p' : self.port,
-                                  't' : int (round(time.time()*1000)),
+                                  't' : int(round(time.time()*1000)),
                                   'i' : socket.gethostbyname(socket.gethostname())}
             if self.authkey and self.userid:
                 self.config_params['a'] = self.authkey
@@ -196,16 +198,16 @@ class Naoko(object):
 
         self.apiclient = APIClient(self.apikeys)
 
-        self.chatthread = threading.Thread (target=Naoko._chatloop, args=[self])
+        self.chatthread = threading.Thread(target=Naoko._chatloop, args=[self])
         self.chatthread.start()
 
-        self.stthread = threading.Thread (target=Naoko._stloop, args=[self])
+        self.stthread = threading.Thread(target=Naoko._stloop, args=[self])
         self.stthread.start()
 
-        self.playthread = threading.Thread (target=Naoko._playloop, args=[self])
+        self.playthread = threading.Thread(target=Naoko._playloop, args=[self])
         self.playthread.start()
 
-        self.apithread = threading.Thread (target=Naoko._apiloop, args=[self])
+        self.apithread = threading.Thread(target=Naoko._apiloop, args=[self])
         self.apithread.start()
 
         if self.irc_nick:
@@ -237,9 +239,9 @@ class Naoko(object):
                 status = status and self.playthread.isAlive()
                 status = status and self.apithread.isAlive()
             except Exception as e:
-                self.logger.error (e)
+                self.logger.error(e)
                 status = False
-            self.logger.debug ("Status is %s", status)
+            self.logger.debug("Status is %s", status)
             if status and pipe:
                 pipe.send("HEALTHY")
             if not status:
@@ -275,7 +277,7 @@ class Naoko(object):
             else:
                 fn(st_type, arg)
         else:
-            self.logger.info ("Synchtube Loop Closed")
+            self.logger.info("Synchtube Loop Closed")
             self.close()
 
     # Responsible for communicating with IRC
@@ -284,19 +286,21 @@ class Naoko(object):
         self.irc_logger.info("Starting IRC Client")
         self.ircclient = client = IRCClient(self.server, self.channel, self.irc_nick, self.ircpw)
         self.irc_queue = deque()
+        self._initIRCCommandHandlers()
         failCount = 0
         while not self.closing.isSet():
             frame = deque(client.recvMessage().split("\n"))
             while len(frame) > 0:
-                data = frame.popleft().strip("\r")
+                data = self.filterString(frame.popleft())[1]
                 if data.find("PING :") != -1:
                     client.ping()
                 elif data.find("PRIVMSG " + self.channel + " :") != -1:
                     name = data.split('!', 1)[0][1:]
                     msg = data[data.find("PRIVMSG " + self.channel + " :") + len("PRIVMSG " + self.channel + " :"):]
                     if not name == self.irc_nick:
-                        self.st_queue.append(self.filterString("(" + name + ") " + msg)[1])
-                    self.irc_logger.info ("IRC %r:%r", name, msg)
+                        self.st_queue.append("(" + name + ") " + msg)
+                        self.chatCommand(IRCUser(*(name, False)), msg, True)
+                    self.irc_logger.info("IRC %r:%r", name, msg)
                 # Currently ignore messages sent directly to her
                 elif data.find("PRIVMSG " + self.irc_nick + " :") != -1:
                     continue
@@ -323,9 +327,7 @@ class Naoko(object):
 
                 # Disable IRC support when an incorrect password is provided.
                 elif data.find("NOTICE " + self.irc_nick + " :Password incorrect.") != -1:
-                    self.irc_logger.info("IRC login failed due to incorrect password.")
-                    self.sendChat("Incorrect IRC password provided. Disabling IRC support.")
-                    self.disableIRC()
+                    self.disableIRC("Incorrect IRC password provided. Disabling IRC support.")
                     return
 
                 # Nickname in use, attempt to ghost if a password is provided or use an alternate name
@@ -337,9 +339,7 @@ class Naoko(object):
                     else:
                         failCount += 1
                         if failCount > 4:
-                            self.irc_logger.info("Nickname and %d attempted alternatives in use" % (failCount))
-                            self.sendChat("Unable to find an unused IRC nickname. Disabling IRC support.")
-                            self.disableIRC()
+                            self.disableIRC("Unable to find an unused IRC nickname. Disabling IRC support.")
                             return
                         self.irc_logger.info("Nickname in use and no password provided. Switching to alternate name")
                         self.irc_nick = self.irc_nick[:29] + str(failCount)
@@ -352,13 +352,11 @@ class Naoko(object):
                     client.send("JOIN " + self.channel + "\n")
                 # Ghost failed. Since the nickname is in use and an incorrect password is provided disable IRC
                 # to avoid being stuck in a restart loop and bring attention to the incorrect password.
-                elif data.find("NOTICE " + self.irc_nick [:24] + "_naoko :Access denied.") != -1:
-                    self.irc_logger.info("Ghost failed due to incorrect password.")
-                    self.sendChat("IRC nickname in use and incorrect password provided. Disabling IRC support.")
-                    self.disableIRC()
+                elif data.find("NOTICE " + self.irc_nick[:24] + "_naoko :Access denied.") != -1:
+                    self.disableIRC("IRC nickname in use and incorrect password provided. Disabling IRC support.")
                     return
         else:
-            self.logger.info ("IRC Loop Closed")
+            self.logger.info("IRC Loop Closed")
             self.close()
 
     # Responsible for sending chat messages to IRC and Synchtube
@@ -369,13 +367,13 @@ class Naoko(object):
                 self.irc_queue.clear()
                 self.st_queue.clear()
             else:
-                if len (self.irc_queue) > 0:
+                if len(self.irc_queue) > 0:
                     self.ircclient.sendMsg(self.irc_queue.popleft())
-                if len (self.st_queue) > 0:
+                if len(self.st_queue) > 0:
                     self.sendChat(self.st_queue.popleft())
             time.sleep(self.spam_interval)
         else:
-            self.logger.info ("Chat Loop Closed")
+            self.logger.info("Chat Loop Closed")
 
     # Responsible for handling playback
     def _playloop(self):
@@ -400,15 +398,15 @@ class Naoko(object):
                 if not self.state.pauseTime < 0:
                     unpause = self.state.pauseTime - (self.state.time / 1000)
                 self.pauseTime = -1.0
-                self.logger.info ("Unpausing video %f seconds from the beginning" % (unpause))
+                self.logger.info("Unpausing video %f seconds from the beginning" % (unpause))
                 self.send("s", [1, unpause])
                 sleepTime = 60
             if self.state.state == 0:
                 if not self.leading.isSet(): continue
-                self.send ("s", [1,0])
+                self.send("s", [1,0])
                 sleepTime = 60
-            self.logger.debug ("Waiting %f seconds for the end of the video" % (sleepTime))
-            if not self.playerAction.wait (sleepTime):
+            self.logger.debug("Waiting %f seconds for the end of the video" % (sleepTime))
+            if not self.playerAction.wait(sleepTime):
                 if self.closing.isSet(): break
                 if not self.leading.isSet(): continue
                 self.nextVideo()
@@ -478,7 +476,7 @@ class Naoko(object):
                                 "unmute"            : self.unmute,
                                 "status"            : self.status,
                                 "lock"              : self.lock,
-                                "unlock"            : self.unlock,
+                                "unlock"            : self.lock,
                                 "choose"            : self.choose,
                                 "ask"               : self.ask,
                                 "8ball"             : self.eightBall,
@@ -498,12 +496,51 @@ class Naoko(object):
                                 "translate"         : self.translate,
                                 "cleverbot"         : self.cleverbot}
 
+    def _initIRCCommandHandlers(self):
+        self.ircCommandHandlers = {"status"            : self.status,
+                                   "choose"            : self.choose,
+                                   "ask"               : self.ask,
+                                   "8ball"             : self.eightBall,
+                                   "steak"             : self.steak,
+                                   "d"                 : self.dice,
+                                   "dice"              : self.dice,
+                                   "addrandom"         : self.addRandom,
+                                   "translate"         : self.translate,
+                                   "cleverbot"         : self.cleverbot}
+
+    # Handle chat commands from both IRC and Synchtube
+    def chatCommand(self, user, msg, irc=False):
+        if len(msg) == 0 or  msg[0] != '$': return
+        
+        commands = self.commandHandlers
+        if irc:
+            commands = self.ircCommandHandlers
+
+        line = msg[1:].split(' ', 1)
+        command = line[0].lower()
+        try:
+            if len(line) > 1:
+                arg = line[1].strip()
+            else:
+                arg = ''
+            fn = commands[command]
+        except KeyError:
+            # Dice is a special case
+            if re.match(r"^[0-9]+d[0-9]+$", command):
+                self.dice(command, user, " ".join(command.split('d')))
+            else:
+                self.logger.warn("No handler for %s [%s]", command, arg)
+        else:
+            fn(command, user, arg)
+
+
+
     def nextVideo(self):
         self.vidLock.acquire()
         videoIndex = self.getVideoIndexById(self.state.current)
         if videoIndex == None:
             videoIndex = -1
-        if len (self.vidlist) == 0:
+        if len(self.vidlist) == 0:
             self.sendChat("Video list is empty, restarting.")
             self.close()
         videoIndex = (videoIndex + 1) % len(self.vidlist)
@@ -511,14 +548,16 @@ class Naoko(object):
             self.state.previous = self.state.current
         else:
             self.state.previous = None
-        self.logger.debug ("Advancing to next video [%s]", self.vidlist[videoIndex])
+        self.logger.debug("Advancing to next video [%s]", self.vidlist[videoIndex])
         self.state.time = int(round(time.time() * 1000))
         self.send("s", [2])
         self.send("pm", self.vidlist[videoIndex].v_sid)
         self.enqueueMsg("Playing: %s" % (self.filterString(self.vidlist[videoIndex].vidinfo.title)[1]))
         self.vidLock.release()
 
-    def disableIRC(self):
+    def disableIRC(self, reason):
+        self.irc_logger.warning(reason)
+        self.sendChat(reason)
         self.irc_nick = None
         self.irc_queue = deque(maxlen=0)
         self.ircclient.close()
@@ -672,7 +711,7 @@ class Naoko(object):
         # This prevents her from skipping something she does not recognize, like a livestream
         # HOWEVER, this will require a mod to tell her to skip
         self.state.dur = 9999999
-        v = data [1]
+        v = data[1]
         v.append(None)
         v.append(None)
         v = v[:len(SynchtubeVidInfo._fields)]
@@ -709,7 +748,7 @@ class Naoko(object):
             if self.state.state == 2:
                 self.state.pauseTime = time.time()
                 self.logger.debug("Paused %.3f seconds from the beginning of the video." % (self.state.pauseTime - (self.state.time/1000)))
-            elif len (data) > 1:
+            elif len(data) > 1:
                 self.state.time = data[1]
             else:
                 self.state.time = int(round(time.time() * 1000))
@@ -717,7 +756,7 @@ class Naoko(object):
 
     def play(self, tag, data):
         if self.leading.isSet() and (not self.state.previous == None) and (not self.getVideoIndexById(self.state.previous) == None):
-            self.send ("rm", self.state.previous)
+            self.send("rm", self.state.previous)
         self.state.previous = None
         self.state.current = data[1]
         index = self.getVideoIndexById(self.state.current)
@@ -768,7 +807,7 @@ class Naoko(object):
     def remUser(self, tag, data):
         try:
             del self.userlist[data]
-            if (self.pending.has_key(data)):
+            if self.pending.has_key(data):
                 del self.pending[data]
         except KeyError:
             self.logger.exception("Failure to delete user %s from %s", data, self.userlist)
@@ -794,7 +833,7 @@ class Naoko(object):
             self._leaderActions()
             return
         if self.room_info["tv?"]:
-            self.send ("turnoff_tv")
+            self.send("turnoff_tv")
         else:
             self.send("takeleader", self.sid)
 
@@ -807,23 +846,7 @@ class Naoko(object):
         if not user.sid == self.sid and self.irc_nick:
             self.irc_queue.append("(" + user.nick + ") " + msg)
 
-        if len(msg) > 0 and msg[0] == '$':
-            line = msg[1:].split(' ', 1)
-            command = line [0].lower()
-            try:
-                if len(line) > 1:
-                    arg = line[1].strip()
-                else:
-                    arg = ''
-                fn = self.commandHandlers[command]
-            except KeyError:
-                # Dice is a special case
-                if re.match(r"^[0-9]+d[0-9]+$", command):
-                    self.dice(command, user, " ".join(command.split('d')))
-                else:
-                    self.logger.warn("No handler for %s [%s]", command, arg)
-            else:
-                fn(command, user, arg)
+        self.chatCommand(user, msg)
 
         if user.mod or user.sid == self.sid: return
 
@@ -864,7 +887,7 @@ class Naoko(object):
         if user.mod:
             self.muted = True
 
-    def unmute (self, command, user, data):
+    def unmute(self, command, user, data):
         if user.mod:
             self.muted = False
 
@@ -876,34 +899,34 @@ class Naoko(object):
         if not user.mod: return
         args = data.split(' ', 1)
         target = self.getUserByNick(args[0])
-        self.logger.info ("Requested mod change to %s by %s", target, user)
+        self.logger.info("Requested mod change to %s by %s", target, user)
         if not target: return
         self.changeLeader(target.sid)
 
     def dice(self, command, user, data):
         if not data: return
         params = data.strip().split()
-        if len (params) < 2: return
+        if len(params) < 2: return
         num = 0
         size = 0
         try:
             num = int(params[0])
-            size = int (params[1])
+            size = int(params[1])
             if num < 1 or size < 1 or num > 1000 or size > 1000: return # Limits
             sum = 0
             i = 0
             output = []
             while i < num:
-                rand = random.randint (1, size)
+                rand = random.randint(1, size)
                 if i < 5:
                     output.append(str(rand))
                 if i == 5:
                     output.append("...")
                 sum = sum + rand
                 i = i+1
-            self.enqueueMsg("%dd%d: %d [%s]" % (num, size, sum, ",".join (output)))
+            self.enqueueMsg("%dd%d: %d [%s]" % (num, size, sum, ",".join(output)))
         except (TypeError, ValueError) as e:
-            self.logger.debug (e)
+            self.logger.debug(e)
 
     # Bumps the last video added by the specificied user
     # If no name is provided it bumps the last video by the user who sent the command
@@ -972,7 +995,7 @@ class Naoko(object):
         try:
             num = int(data.strip())
         except (TypeError, ValueError) as e:
-            self.logger.debug (e)
+            self.logger.debug(e)
         # Default to 5, which is also the most non-mods can add at once 
         if num is None:
             num = 5
@@ -993,7 +1016,7 @@ class Naoko(object):
             try:
                 num = int(params[1])
             except (TypeError, ValueError) as e:
-                self.logger.debug (e)
+                self.logger.debug(e)
         if num is None:
             num = 3
         if num > 5 or num < 1: return
@@ -1048,20 +1071,14 @@ class Naoko(object):
                     self.send("rm", x)
             self.asLeader(purge)
 
-
-    def lock (self, command, user, data):
+    def lock(self, command, user, data):
         if not user.mod: return
+        if self.room_info["lock?"] == (command == "lock"): return
         def changeLock():
-            self.send ("lock?", True)
+            self.send("lock?", command == "lock")
         self.asLeader(changeLock)
 
-    def unlock (self, command, user, data):
-        if not user.mod: return
-        def changeLock():
-            self.send ("lock?", False)
-        self.asLeader(changeLock)
-
-    def status (self, command, user, data):
+    def status(self, command, user, data):
         msg = "Status = ["
         if not self.muted:
             msg += "Not "
@@ -1077,7 +1094,7 @@ class Naoko(object):
     def choose(self, command, user, data):
         if not data: return
         choices = data.strip()
-        if len (choices) == 0: return
+        if len(choices) == 0: return
         self.enqueueMsg("[Choose: %s] %s" % (choices, random.choice(choices.split())))
 
     def steak(self, command, user, data):
@@ -1086,13 +1103,13 @@ class Naoko(object):
     def ask(self, command, user, data):
         if not data: return
         question = data.strip()
-        if len (question) == 0: return
+        if len(question) == 0: return
         self.enqueueMsg("[%s] %s" % (question, random.choice(["Yes", "No"])))
 
     def eightBall(self, command, user, data):
         if not data: return
         question = data.strip()
-        if len (question) == 0: return
+        if len(question) == 0: return
         self.enqueueMsg("[8ball %s] %s" % (user.nick, random.choice(eight_choices)))
 
     # Kick a single user by their name.
@@ -1130,7 +1147,7 @@ class Naoko(object):
 
         target = self.getUserByNick(args[0])
         if not target or target.mod: return
-        self.logger.info ("Kick Target %s Requestor %s", target.nick, user.nick)
+        self.logger.info("Kick Target %s Requestor %s", target.nick, user.nick)
         if len(args) > 1:
             def kickUser():
                 self._kickUser(target.sid, args[1], False)
@@ -1145,7 +1162,7 @@ class Naoko(object):
         args = data.split(' ', 1)
         target = self.getUserByNick(args[0])
         if not target or target.mod: return
-        self.logger.info ("Ban Target %s Requestor %s", target, user)
+        self.logger.info("Ban Target %s Requestor %s", target, user)
         if len(args) > 1:
             def banUser():
                 self._banUser(target.sid, args[1])
@@ -1202,7 +1219,7 @@ class Naoko(object):
         if input == None: return (False, "")
         output = []
         value = input
-        if type (value) is not str and type(value) is not unicode:
+        if type(value) is not str and type(value) is not unicode:
             value = str(value)
         if type(value) is not unicode:
             try:
@@ -1224,7 +1241,7 @@ class Naoko(object):
     # Returns whether or not a video id could possibly be valid
     # Guards against possible attacks and annoyances
     def checkVideoId(self, vi):
-        if type (vi.vid) is not str and type(vi.vid) is not unicode:
+        if type(vi.vid) is not str and type(vi.vid) is not unicode:
             return False
         if vi.site == "yt":
             return re.match("^[A-Za-z0-9\-_]+$", vi.vid)
@@ -1334,7 +1351,7 @@ class Naoko(object):
     def _lastBans(self, nick, num):
         if not nick == "-all":
             rows = self.dbclient.fetch("SELECT timestamp, reason FROM bans WHERE uname = ? COLLATE NOCASE ORDER BY timestamp DESC LIMIT ?", (nick, num))
-            if len (rows) == 0:
+            if len(rows) == 0:
                 self.enqueueMsg("No recorded bans for %s" % nick)
                 return
             if num > 1:
@@ -1345,7 +1362,7 @@ class Naoko(object):
                 self.enqueueMsg("%s - %s" % (datetime.fromtimestamp(r[0] / 1000).isoformat(' '), r[1]))
         else:
             rows = self.dbclient.fetch("SELECT timestamp, reason, uname FROM bans ORDER BY timestamp DESC LIMIT ?", (num,))
-            if len (rows) == 0:
+            if len(rows) == 0:
                 self.enqueueMsg("No recorded bans")
                 return
             if num > 1:
@@ -1359,11 +1376,11 @@ class Naoko(object):
         # Limit to once every 5 seconds
         if time.time() - self.last_random < 5: return
         self.last_random = time.time()
-        self.logger.debug ("Adding %d randomly selected videos", num)
+        self.logger.debug("Adding %d randomly selected videos", num)
         vids = self.dbclient.getVideos(num, ['type', 'id', 'title', 'duration_ms'], ('RANDOM()',))
-        self.logger.debug ("Retrieved %s", vids)
+        self.logger.debug("Retrieved %s", vids)
         for v in vids:
-            self.send ("am", [v[0], v[1], v[2],"http://i.ytimg.com/vi/%s/default.jpg" % (v[1]), v[3]/1000])
+            self.send("am", [v[0], v[1], v[2],"http://i.ytimg.com/vi/%s/default.jpg" % (v[1]), v[3]/1000])
 
     # Add the video described by v
     def _addVideo(self, v, sql=True):
@@ -1388,7 +1405,7 @@ class Naoko(object):
     def _removeVideo(self, v):
         if self.stthread != threading.currentThread():
             raise Exception("_removeVideo should not be called outside the Synchtube thread")
-        idx = self.getVideoIndexById (v)
+        idx = self.getVideoIndexById(v)
         if idx >= 0:
             self.vidLock.acquire()
             self.vidlist.pop(idx)
@@ -1404,7 +1421,7 @@ class Naoko(object):
             pos = self.getVideoIndexById(after) + 1
         self.vidlist.insert(pos, video)
         self.vidLock.release()
-        self.logger.debug ("Inserted %s after %s", video, self.vidlist[pos - 1])
+        self.logger.debug("Inserted %s after %s", video, self.vidlist[pos - 1])
 
     # Kick user using their sid(session id)
     def _kickUser(self, sid, reason="Requested", sendMessage=True):
