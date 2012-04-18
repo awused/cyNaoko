@@ -3,8 +3,10 @@
 
 import logging
 
-# Default Timeout.
+# Default timeout for both the monitoring process and the heartbeat thread
 TIMEOUT   = 30
 
-#Logging Level
-logLevel = logging.DEBUG
+LOG_LEVEL = logging.DEBUG
+
+# Default Wait when an unknown video is playing in seconds.
+DEFAULT_WAIT = 3 * 60 * 60

@@ -31,42 +31,19 @@ cleverbot_start_vals = ["","y","","","","","","","","","wsf","","0","","","","",
 class APIClient(object):
     def __init__(self, keys):
         self.logger = logging.getLogger("apiclient")
-        self.logger.setLevel(logLevel)
+        self.logger.setLevel(LOG_LEVEL)
         self.logger.debug("Initializing APIClient")
         self.keys = keys
         self.clever = OrderedDict(zip(cleverbot_keys, cleverbot_start_vals))
     
-    # Grab relevant information from a reponse from the Youtube API packed in a tuple
-    # Returns False if there was an error of any kind
-    def getYoutubeVideoInfo(self, vid):
-        data = self._getYoutubeAPIVidInfo(vid) 
-        if isinstance(data, dict) and not "error" in data:
-            try:
-                data = data["data"]
-                return (data["title"], data["duration"], data["accessControl"]["embed"] == "allowed")
-            except (TypeError, ValueError, KeyError) as e:
-                # Improperly formed Youtube API response
-                self.logger.warning("Invalid Youtube API response.")
-        return False
-
-    #def translate(self, text, srcLang = 'en', dstLang = 'jp'):
-
-    # Fetch Youtube API information for a single video and unpack it
-    def _getYoutubeAPIVidInfo(self, vid):
-        self.logger.debug("Retrieving video information from the Youtube API.")
-        con = HTTPSConnection("gdata.youtube.com", 443, timeout=10)
-        params = {'v' : 2, 'alt': 'jsonc'}
-        data = None
-        try:
-            con.request("GET", "/feeds/api/videos/%s?%s" % (vid, urlencode(params)))
-            data = json.loads(con.getresponse().read())
-        except Exception as e:
-            # Many things can go wrong with an HTTP request or during JSON parsing
-            self.logger.warning("Error retrieving Youtube API information.")
-            self.logger.debug(e)
-        finally:
-            con.close()
-            return data
+    def getVideoInfo(self, site, vid):
+        if site == "yt":
+            return self._getYoutubeVideoInfo(vid)
+        elif site == "dm" or site == "sc" or site == "vm":
+            # Support for these sites (and maybe blip.tv) forthcoming.
+            return "TODO"
+        else:
+            return "Unknown"
 
     # Cleverbot
     # Some details taken from https://gist.github.com/967404
@@ -96,8 +73,7 @@ class APIClient(object):
             con.close()
             return data
 
-
-    # Translates text from srcLang to dstLang.
+    # Translates text from src to dst.
     # If srcLang is None the Microsoft Translator will attempt to guess the language.
     # Returns -1 if there's no id or secret to use to get an access token.
     def translate(self, text, src, dst):
@@ -129,6 +105,7 @@ class APIClient(object):
             con.close()
             return out
 
+    # Get the temporary access token for Microsoft Translate using the provided client id and secret.
     def _getMSTAccessToken(self):
         self.logger.debug("Retrieving Microsoft Translate access token.")
         con = HTTPSConnection("datamarket.accesscontrol.windows.net", timeout=10)
@@ -146,3 +123,34 @@ class APIClient(object):
         finally:
             con.close()
             return accessToken
+
+    # Get information on videos from various video APIs.
+    # Take in video ids, and return a tuple containing the title, duration, and whether embedding is allowed.
+    # Return False when a video is invalid or the API response is malformed.
+
+    def _getYoutubeVideoInfo(self, vid):
+        data = self._getYoutubeAPIVidInfo(vid) 
+        if isinstance(data, dict) and not "error" in data:
+            try:
+                data = data["data"]
+                return (data["title"], data["duration"], data["accessControl"]["embed"] == "allowed")
+            except (TypeError, ValueError, KeyError) as e:
+                # Improperly formed Youtube API response
+                self.logger.warning("Invalid Youtube API response.")
+        return False
+
+    def _getYoutubeAPIVidInfo(self, vid):
+        self.logger.debug("Retrieving video information from the Youtube API.")
+        con = HTTPSConnection("gdata.youtube.com", 443, timeout=10)
+        params = {'v' : 2, 'alt': 'jsonc'}
+        data = None
+        try:
+            con.request("GET", "/feeds/api/videos/%s?%s" % (vid, urlencode(params)))
+            data = json.loads(con.getresponse().read())
+        except Exception as e:
+            # Many things can go wrong with an HTTP request or during JSON parsing
+            self.logger.warning("Error retrieving Youtube API information.")
+            self.logger.debug(e)
+        finally:
+            con.close()
+            return data

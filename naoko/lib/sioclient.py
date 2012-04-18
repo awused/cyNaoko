@@ -43,9 +43,9 @@ class WebSocket(object):
         self.field = ''
         self.last_byte = 0
         self.logger =logging.getLogger("websocket")
-        self.logger.setLevel(logLevel)
+        self.logger.setLevel(LOG_LEVEL)
         self.pkt_logger =logging.getLogger("websocket.pkt")
-        self.pkt_logger.setLevel(logLevel)
+        self.pkt_logger.setLevel(LOG_LEVEL)
         self.closing = False
 
     def handle_read(self):
@@ -214,9 +214,9 @@ class SocketIOClient(object):
         self.resource = resource
         self.params = params
         self.logger = logging.getLogger("socketio")
-        self.logger.setLevel(logLevel)
+        self.logger.setLevel(LOG_LEVEL)
         self.pkt_logger = logging.getLogger("socketio.pkt")
-        self.pkt_logger.setLevel(logLevel)
+        self.pkt_logger.setLevel(LOG_LEVEL)
         self.ip = socket.gethostbyname(socket.gethostname())
         self.sched = sched.scheduler(time.time, time.sleep)
         self.heartBeatEvent = False

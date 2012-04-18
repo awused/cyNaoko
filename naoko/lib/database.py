@@ -13,7 +13,7 @@
 
 import sqlite3
 import logging
-from settings import logLevel
+from settings import LOG_LEVEL
 
 ProgrammingError = sqlite3.ProgrammingError
 DatabaseError    = sqlite3.DatabaseError
@@ -82,7 +82,7 @@ class NaokoDB(object):
 
     def __init__(self, database, initscript):
         self.logger = logging.getLogger("database")
-        self.logger.setLevel(logLevel)
+        self.logger.setLevel(LOG_LEVEL)
         self.initscript = initscript
         self.db_file = database
         self.con = sqlite3.connect(database)
@@ -277,7 +277,7 @@ if __name__ == '__main__':
     cur_log = logging.getLogger('naokocursor')
     db_log  = logging.getLogger('database')
     loggers = [cur_log, db_log]
-    [logger.setLevel(logLevel) for logger in loggers]
+    [logger.setLevel(LOG_LEVEL) for logger in loggers]
 
     vids = [('yt', 'Fp7dKcCBXHI', 37 * 1000,
                 u'【English Sub】 Kyouko Canyon 【Yuru Yuri】'),
@@ -345,7 +345,7 @@ if __name__ == '__main__':
         print "**Found all permutations in %d iterations." % (i,)
 
         # Reenable logging
-        [logger.setLevel(logLevel) for logger in loggers]
+        [logger.setLevel(LOG_LEVEL) for logger in loggers]
 
         sorted_rows = db.getVideos(4, set(['id']), ('id', 'ASC'))
         if sorted_rows != sorted(sorted_rows):

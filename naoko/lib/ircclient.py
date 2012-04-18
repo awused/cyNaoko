@@ -22,7 +22,7 @@ class IRCClient(object):
         # If an IRC name is set and this fails, the entire bot will restart
         # IRC pings can be unpredictable, so a timeout (except when closing) isn't practical
         self.logger = logging.getLogger("ircclient")
-        self.logger.setLevel(logLevel)
+        self.logger.setLevel(LOG_LEVEL)
         self.loggedIn = False
         self.inChannel = False
         self.server = server

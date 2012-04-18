@@ -101,16 +101,17 @@ class Naoko(object):
         self.leader_queue = deque()
         self.st_queue = deque()
         self.logger = logging.getLogger("stclient")
-        self.logger.setLevel(logLevel)
+        self.logger.setLevel(LOG_LEVEL)
         self.chat_logger = logging.getLogger("stclient.chat")
-        self.chat_logger.setLevel(logLevel)
+        self.chat_logger.setLevel(LOG_LEVEL)
         self.irc_logger = logging.getLogger("stclient.irc")
-        self.irc_logger.setLevel(logLevel)
+        self.irc_logger.setLevel(LOG_LEVEL)
         self.pending = {}
         self.leader_sid = None
         self.pendingToss = False
         self.muted = False
         self.banTracker = {}
+        
         # Keep all the state information together
         self.state = Object()
         self.state.state = 0
@@ -119,6 +120,7 @@ class Naoko(object):
         self.state.pauseTime = -1.0
         self.state.dur = 0
         self.state.previous = None
+        self.state.reason = None
 
         if self.pw:
             self.logger.info("Attempting to login")
@@ -387,8 +389,9 @@ class Naoko(object):
                 self.nextVideo()
                 self.state.state = -1
                 sleepTime = 60
-            if self.state.state == -2:
-                self.enqueueMsg(self.state.current)
+            if self.state.reason:
+                self.enqueueMsg(self.state.reason)
+                self.state.reason = None
                 self.nextVideo()
                 self.state.state = -1
                 sleepTime = 60
@@ -415,7 +418,7 @@ class Naoko(object):
 
     def _sqlloop(self):
         self.db_logger = logging.getLogger("stclient.db")
-        self.db_logger.setLevel(logLevel)
+        self.db_logger.setLevel(LOG_LEVEL)
         initscript=None
         if self.dbinit:
             initscript=open(self.dbinit).read()
@@ -431,7 +434,7 @@ class Naoko(object):
         self.logger.info("SQL Loop Closed")
 
     # This loop is responsible for dealing with all external APIs
-    # This includes validating youtube videos and any future functionality
+    # This includes validating Youtube videos and any future functionality
     def _apiloop(self):
         while self.apiAction.wait():
             if self.closing.isSet(): break
@@ -580,8 +583,7 @@ class Naoko(object):
         self.leading.set()
         self.playerAction.set()
         self.apiAction.set()
-        if self.dbfile:
-            self.sqlAction.set()
+        self.sqlAction.set()
         if self.irc_nick:
             self.ircclient.close()
 
@@ -644,27 +646,20 @@ class Naoko(object):
             self.invalidVideo("Invalid video ID.")
             return
             
-        # Only handles youtube right now
         def check():
-            reason = "OKAY"
-            if vidinfo.site == "yt":
-                reason = self._checkYoutube(vidinfo.vid) or reason
-            if reason != "OKAY":
-                self.invalidVideo(reason)
+            self.invalidVideo(self._checkVideo(vidinfo))
         self.api_queue.append(check)
         self.apiAction.set()
 
     # Skips the current invalid video if she is leading.
     # Otherwise saves that information for if she does take lead.
     def invalidVideo(self, reason):
-        if self.leading.isSet():
-            self.enqueueMsg(reason)
-            self.nextVideo()
-        else:
-            # Mark the state as invalid
-            self.state.state = -2
-            # Store the reason in current
-            self.state.current = reason 
+        if reason:
+            if self.leading.isSet():
+                self.enqueueMsg(reason)
+                self.nextVideo()
+            else:
+                self.state.reason = reason
 
     # Kicks a user for something they did in chat
     # Tracks kicks by username for a three strikes policy
@@ -707,10 +702,9 @@ class Naoko(object):
         self.logger.info("Change media: %s" % (data))
         self.state.current = data[0]
         self.state.previous = None
-        # By default wait for a very long time
-        # This prevents her from skipping something she does not recognize, like a livestream
-        # HOWEVER, this will require a mod to tell her to skip
-        self.state.dur = 9999999
+        # Prevent her from skipping something she does not recognize, like a livestream.
+        # HOWEVER, this will require a mod to tell her to skip before DEFAULT_WAIT seconds.
+        self.state.dur = DEFAULT_WAIT
         v = data[1]
         v.append(None)
         v.append(None)
@@ -765,8 +759,8 @@ class Naoko(object):
             self.close()
             return
         self.state.dur = self.vidlist[index].vidinfo.dur
-        self.changeState(tag, data[2])
         self.checkVideo(self.vidlist[index].vidinfo)
+        self.changeState(tag, data[2])
         self.logger.debug("Playing %s %s", tag, data)
 
     def ignore(self, tag, data):
@@ -774,7 +768,7 @@ class Naoko(object):
 
     def nick(self, tag, data):
         sid = data[0]
-        (valid, nick) = self.filterString(data[1], True)
+        valid, nick = self.filterString(data[1], True)
         oldnick = self.userlist[sid].nick
         self.logger.debug("%s nick: %s (was: %s)", sid, nick, oldnick)
         self.userlist[sid]= self.userlist[sid]._replace(nick=nick)
@@ -1009,16 +1003,15 @@ class Naoko(object):
     def lastBans(self, command, user, data):
         params = data.split()
         target = user.nick
+        num = 1
         if len(params) > 0 and user.mod:
             target = params[0]
-        num = None
-        if len(params) > 1:
-            try:
-                num = int(params[1])
-            except (TypeError, ValueError) as e:
-                self.logger.debug(e)
-        if num is None:
             num = 3
+            if len(params) > 1:
+                try:
+                    num = int(params[1])
+                except (TypeError, ValueError) as e:
+                    self.logger.debug(e)
         if num > 5 or num < 1: return
         def fetchBans():
             self._lastBans(target, num)
@@ -1165,11 +1158,11 @@ class Naoko(object):
         self.logger.info("Ban Target %s Requestor %s", target, user)
         if len(args) > 1:
             def banUser():
-                self._banUser(target.sid, args[1])
+                self._banUser(target.sid, args[1], modName=user.nick)
             self.asLeader(banUser)
         else:
             def banUser():
-                self._banUser(target.sid)
+                self._banUser(target.sid, modName=user.nick)
             self.asLeader(banUser)
 
     def cleverbot(self, command, user, data):
@@ -1241,11 +1234,15 @@ class Naoko(object):
     # Returns whether or not a video id could possibly be valid
     # Guards against possible attacks and annoyances
     def checkVideoId(self, vi):
+        if type(vi.vid) is int:
+            return True
         if type(vi.vid) is not str and type(vi.vid) is not unicode:
             return False
         if vi.site == "yt":
-            return re.match("^[A-Za-z0-9\-_]+$", vi.vid)
-        elif vi.site == "dm" or vi.site == "sc" or vi.site == "vm":
+            return re.match("^[a-zA-Z0-9\-_]+$", vi.vid)
+        elif vi.site == "dm":
+            return re.match("^[a-zA-A0-9]+$", vi.vid)
+        elif vi.site == "sc" or vi.site == "vm":
             return re.match("^[0-9]+$", vi.vid)
         else:
             return True
@@ -1281,33 +1278,35 @@ class Naoko(object):
         self.vidlist = newlist
         self.vidLock.release() 
 
-    def _sqlInsertBan(self, user, reason, time):
+    def _sqlInsertBan(self, user, reason, time, modName):
         auth = 0
-        if user.auth:
+        # As found elsewhere, user.auth is unreliable
+        if user.uid:
             auth = 1
-        self.db_logger.debug("Inserting %s into bans", (reason, auth, user.nick, int(round(time*1000))))
-        self.dbclient.execute("INSERT INTO bans VALUES(?, ?, ?, ?)", (reason, auth, user.nick, int(round(time*1000))))
+        self.db_logger.debug("Inserting %s into bans", (reason, auth, user.nick, int(round(time*1000)), modName))
+        self.dbclient.execute("INSERT INTO bans VALUES(?, ?, ?, ?, ?)", (reason, auth, user.nick, int(round(time*1000)), modName))
         self.dbclient.commit()
 
-    # Checks to see if the current youtube video isn't invalid, blocked, or removed
+    # Checks to see if the current video isn't invalid, blocked, or removed
     # Also updates the duration if necessary to prevent certain types of annoying attacks on the room
-    def _checkYoutube(self, vid):
-        data = self.apiclient.getYoutubeVideoInfo(vid)
+    def _checkVideo(self, vi):
+        data = self.apiclient.getVideoInfo(vi.site, vi.vid)
         if data:
-            title, dur, embed = data
-            if not embed:
-                self.logger.debug("Youtube embedding disabled.")
-                return "Embedding disabled." 
-            # When someone has manually added a video with an incorrect duration
-            elif self.state.dur != dur:
-                self.logger.debug("Duration mismatch: %d expected, %d actual." % (self.state.dur, dur))
-                self.state.dur = dur
-                self.playerAction.set()
-            return ""
-        return "Invalid Youtube video."
+            if data != "Unknown" and data != "TODO":
+                title, dur, embed = data
+                if not embed:
+                    self.logger.debug("Embedding disabled.")
+                    return "Embedding disabled." 
+                # When someone has manually added a video with an incorrect duration
+                elif self.state.dur != dur:
+                    self.logger.debug("Duration mismatch: %d expected, %d actual." % (self.state.dur, dur))
+                    self.state.dur = dur
+                    self.playerAction.set()
+            return None
+        return "Invalid video."
 
     # Validates a video before inserting it into the database.
-    # Will correct invalid durations and titles for youtube videos.
+    # Will correct invalid durations and titles for Youtube videos.
     # This makes SQL inserts dependent on the external API.
     # TODO -- Maybe -- detect if there's a communication error/timeout and let the insertion go through anyway
     def _validateVideoSQLInsert(self, v):
@@ -1318,8 +1317,13 @@ class Naoko(object):
         valid = self.checkVideoId(vi)
 
         if valid:
-            if vi.site == 'yt':
-                valid, title, dur = self._validateYoutube(vi)
+            data = self.apiclient.getVideoInfo(vi.site, vi.vid)
+            if data and data != "Unknown":
+                if data != "TODO":
+                    title, dur, valid = data
+            else:
+                # Do not store the video if it is invalid or from an unknown website.
+                valid = False
         if not valid:
             # The video is invalid, don't insert it
             self.logger.debug("Invalid video, skipping SQL insert.")
@@ -1330,16 +1334,7 @@ class Naoko(object):
             self._sqlInsertVideo(v, title, dur)
         self.sql_queue.append(insert)
         self.sqlAction.set()
-        
-    def _validateYoutube(self, vi):
-        data = self.apiclient.getYoutubeVideoInfo(vi.vid)
-        # Only accept valid videos with embedding enabled
-        if data:
-            title, dur, embed = data
-            if embed:
-                return (True, title, dur)
-        return (False, None, None)
-
+    
     def _sqlInsertVideo(self, v, title, dur):
         vi = v.vidinfo
         self.db_logger.debug("Inserting %s into videos", (vi.site, vi.vid, dur * 1000, title))
@@ -1350,7 +1345,7 @@ class Naoko(object):
         
     def _lastBans(self, nick, num):
         if not nick == "-all":
-            rows = self.dbclient.fetch("SELECT timestamp, reason FROM bans WHERE uname = ? COLLATE NOCASE ORDER BY timestamp DESC LIMIT ?", (nick, num))
+            rows = self.dbclient.fetch("SELECT timestamp, reason, mod FROM bans WHERE uname = ? COLLATE NOCASE ORDER BY timestamp DESC LIMIT ?", (nick, num))
             if len(rows) == 0:
                 self.enqueueMsg("No recorded bans for %s" % nick)
                 return
@@ -1359,9 +1354,9 @@ class Naoko(object):
             else:
                 self.enqueueMsg("Last ban for user %s:" % (nick))
             for r in rows:
-                self.enqueueMsg("%s - %s" % (datetime.fromtimestamp(r[0] / 1000).isoformat(' '), r[1]))
+                self.enqueueMsg("%s by %s - %s" % (datetime.fromtimestamp(r[0] / 1000).isoformat(' '), r[2], r[1]))
         else:
-            rows = self.dbclient.fetch("SELECT timestamp, reason, uname FROM bans ORDER BY timestamp DESC LIMIT ?", (num,))
+            rows = self.dbclient.fetch("SELECT timestamp, reason, uname, mod FROM bans ORDER BY timestamp DESC LIMIT ?", (num,))
             if len(rows) == 0:
                 self.enqueueMsg("No recorded bans")
                 return
@@ -1370,7 +1365,7 @@ class Naoko(object):
             else:
                 self.enqueueMsg("Last ban:")
             for r in rows:
-                self.enqueueMsg("%s - %s - %s" % (r[2], datetime.fromtimestamp(r[0] / 1000).isoformat(' '), r[1]))
+                self.enqueueMsg("%s - %s by %s - %s" % (r[2], datetime.fromtimestamp(r[0] / 1000).isoformat(' '), r[3], r[1]))
 
     def _addRandom(self, num):
         # Limit to once every 5 seconds
@@ -1431,12 +1426,14 @@ class Naoko(object):
 
     # By default none of the functions use this.
     # Don't come crying to me if the bot bans the entire channel
-    def _banUser(self, sid, reason="Requested", sendMessage=True):
+    def _banUser(self, sid, reason="Requested", sendMessage=True, modName=None):
+        if not modName:
+            modName = self.nick
         if sendMessage:
             self.enqueueMsg("Banned %s: (%s)" % (self.userlist[sid].nick, reason))
         self.send("ban", sid)
         def insert():
-            self._sqlInsertBan(self.userlist[sid], reason, time.time())
+            self._sqlInsertBan(self.userlist[sid], reason, time.time(), modName)
         self.sql_queue.append(insert)
         self.sqlAction.set()
 
