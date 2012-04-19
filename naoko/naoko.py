@@ -1,13 +1,11 @@
 #!/usr/bin/env python
 # Naoko - A prototype synchtube bot
-# Written in 2011 by Falaina falaina@falaina.net
-# Forked and continued in 2012 by Desuwa
-# To the extent possible under law, the author(s) have dedicated all
-# copyright and related and neighboring rights to this software to the
-# public domain worldwide. This software is distributed without any
-# warranty.  You should have received a copy of the CC0 Public Domain
-# Dedication along with this software. If not, see
-# <http://creativecommons.org/publicdomain/zero/1.0/>.
+# Based on Denshi written in 2011 by Falaina falaina@falaina.net
+#
+# This software is released under the 2-clause BSD License.
+# A copy of this license should have been provided with this 
+# software. If not see
+# <http://www.freebsd.org/copyright/freebsd-license.html>.
 
 import hashlib
 import itertools
@@ -34,6 +32,7 @@ from lib.sioclient import SocketIOClient
 from lib.ircclient import IRCClient
 from lib.apiclient import APIClient
 
+# Cleverbot doesn't like publicly posting code to access it. 
 try:
     from lib.cbclient import CleverbotClient
 except ImportError:
@@ -233,7 +232,7 @@ class Naoko(object):
         # the logger will still go to the the launching terminals
         # stdout/stderr, however print statements will probably be rerouted
         # to the socket.
-        self.repl = Repl(port=5001, host='localhost', locals={'naoko': self})
+        self.repl = Repl(port=5001, host='localhost', locals={"naoko": self})
 
         while not self.closing.wait(5):
             # Sleeping first lets everything get initialized
@@ -1391,6 +1390,14 @@ class Naoko(object):
             raise Exception("_addVideo should not be called outside the Synchtube thread")
         v[0] = v[0][:len(SynchtubeVidInfo._fields)]
         v[0][2] = self.filterString(v[0][2])[1]
+ 
+        # Synchtube will sometimes send durations as strings.
+        try:
+            v[0][4] = int(v[0][4])
+        except (ValueError, TypeError) as e:
+            # Something invalid, set a default duration of one minute.
+            v [0][4] = 60
+
         v[0] = SynchtubeVidInfo(*v[0])
         v.append(None) # If an unregistered adds a video there is no name included
         v = v[:len(SynchtubeVideo._fields)]
@@ -1436,7 +1443,7 @@ class Naoko(object):
     # Don't come crying to me if the bot bans the entire channel
     def _banUser(self, sid, reason="Requested", sendMessage=True, modName=None):
         if not modName:
-            modName = self.nick
+            modName = self.name
         if sendMessage:
             self.enqueueMsg("Banned %s: (%s)" % (self.userlist[sid].nick, reason))
         self.send("ban", sid)
@@ -1470,16 +1477,17 @@ class Naoko(object):
     def _getConfig(self):
         config = ConfigParser.RawConfigParser()
         config.read("naoko.conf")
-        self.room = config.get('naoko', 'room')
-        self.name = config.get('naoko', 'nick')
-        self.pw   = config.get('naoko', 'pass')
-        self.spam_interval = float(config.get('naoko', 'spam_interval'))
-        self.server = config.get('naoko', 'irc_server')
-        self.channel = config.get('naoko', 'irc_channel')
-        self.irc_nick = config.get('naoko', 'irc_nick')
-        self.ircpw = config.get('naoko', 'irc_pass')
-        self.dbfile = config.get('naoko', 'db_file')
-        self.dbinit = config.get('naoko', 'db_init')
+        self.room = config.get("naoko", "room")
+        self.name = config.get("naoko", "nick")
+        self.pw   = config.get("naoko", "pass")
+        self.spam_interval = float(config.get("naoko", "spam_interval"))
+        self.server = config.get("naoko", "irc_server")
+        self.channel = config.get("naoko", "irc_channel")
+        self.irc_nick = config.get("naoko", "irc_nick")
+        self.ircpw = config.get("naoko", "irc_pass")
+        self.dbfile = config.get("naoko", "db_file")
+        self.dbinit = config.get("naoko", "db_init")
         self.apikeys = Object()
-        self.apikeys.mst_id = config.get('naoko', 'mst_client_id')
-        self.apikeys.mst_secret = config.get('naoko', 'mst_client_secret')
+        self.apikeys.mst_id = config.get("naoko", "mst_client_id")
+        self.apikeys.mst_secret = config.get("naoko", "mst_client_secret")
+        self.apikeys.sc_id = config.get("naoko", "sc_client_id")

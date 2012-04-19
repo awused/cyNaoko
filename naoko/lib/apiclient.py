@@ -1,13 +1,4 @@
 #!/usr/bin/env python
-# Naoko - A prototype synchtube bot
-# Written in 2011 by Falaina falaina@falaina.net
-# Forked and continued in 2012 by Desuwa
-# To the extent possible under law, the author(s) have dedicated all
-# copyright and related and neighboring rights to this software to the
-# public domain worldwide. This software is distributed without any
-# warranty.  You should have received a copy of the CC0 Public Domain
-# Dedication along with this software. If not, see
-# <http://creativecommons.org/publicdomain/zero/1.0/>.
 
 import json
 import logging
@@ -29,7 +20,9 @@ class APIClient(object):
     def getVideoInfo(self, site, vid):
         if site == "yt":
             return self._getYoutubeVideoInfo(vid)
-        elif site == "dm" or site == "sc" or site == "vm" or site == "bt":
+        elif site == "bt":
+            return self._getBliptvVideoInfo(vid)
+        elif site == "sc" or site == "vm" or site == "dm":
             # Support for these sites  forthcoming.
             return "TODO"
         else:
@@ -91,7 +84,7 @@ class APIClient(object):
     # Return False when a video is invalid or the API response is malformed.
 
     def _getYoutubeVideoInfo(self, vid):
-        data = self._getYoutubeAPIVidInfo(vid) 
+        data = self._getYoutubeAPI(vid) 
         if isinstance(data, dict) and not "error" in data:
             try:
                 data = data["data"]
@@ -101,7 +94,7 @@ class APIClient(object):
                 self.logger.warning("Invalid Youtube API response.")
         return False
 
-    def _getYoutubeAPIVidInfo(self, vid):
+    def _getYoutubeAPI(self, vid):
         self.logger.debug("Retrieving video information from the Youtube API.")
         con = HTTPSConnection("gdata.youtube.com", timeout=10)
         params = {"v" : 2, "alt": "jsonc"}
@@ -117,15 +110,30 @@ class APIClient(object):
             con.close()
             return data
 
-    def _getBliptvAPIVidInfo(self, vid):
+    def _getBliptvVideoInfo(self, vid):
+        data = self._getBliptvAPI(vid)
+        if isinstance(data, dict) and not "error" in data:
+            try:
+                data = data["Post"]
+                return (data["title"], int(data["media"]["duration"]), data["hidden"] == "0")
+            except (TypeError, ValueError, KeyError) as e:
+                # Improperly formed Blip.tv API response
+                self.logger.warning("Invalid Blip.tv API response.")
+        return False
+
+    def _getBliptvAPI(self, vid):
         self.logger.debug("Retrieving video information from the Blip.tv API.")
         con = HTTPConnection("blip.tv", timeout = 10)
         params = {"version" : 2, "skin" : "json"}
         data = None
         try:
-            con.request("GET", "/file/%s?%s" % (vid, urlencode(params)))
+            con.request("GET", "/posts/%s?%s" % (vid, urlencode(params)))
+            data = con.getresponse().read()
+            data = data[data.find("[") + 1:data.rfind("]")]
+            data = json.loads(data)
         except Exception as e:
-            pass
+            self.logger.warning("Error retrieving Blip.tv API information.")
+            self.logger.debug(e)
         finally:
             con.close()
             return data
