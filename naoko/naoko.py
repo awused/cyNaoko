@@ -34,6 +34,12 @@ from lib.sioclient import SocketIOClient
 from lib.ircclient import IRCClient
 from lib.apiclient import APIClient
 
+try:
+    from lib.cbclient import CleverbotClient
+except ImportError:
+    class CleverbotClient(object):
+        pass
+
 eight_choices = [
     "It is certain",
     "It is decidedly so",
@@ -199,6 +205,7 @@ class Naoko(object):
         self.api_queue = deque()
 
         self.apiclient = APIClient(self.apikeys)
+        self.cbclient = CleverbotClient()
 
         self.chatthread = threading.Thread(target=Naoko._chatloop, args=[self])
         self.chatthread.start()
@@ -291,7 +298,7 @@ class Naoko(object):
         self._initIRCCommandHandlers()
         failCount = 0
         while not self.closing.isSet():
-            frame = deque(client.recvMessage().split("\n"))
+            frame = deque(client.recvMessage().split('\n'))
             while len(frame) > 0:
                 data = self.filterString(frame.popleft())[1]
                 if data.find("PING :") != -1:
@@ -496,8 +503,8 @@ class Naoko(object):
                                 "lastbans"          : self.lastBans,
                                 "addrandom"         : self.addRandom,
                                 "purge"             : self.purge,
-                                "translate"         : self.translate,
-                                "cleverbot"         : self.cleverbot}
+                                "cleverbot"         : self.cleverbot,
+                                "translate"         : self.translate}
 
     def _initIRCCommandHandlers(self):
         self.ircCommandHandlers = {"status"            : self.status,
@@ -508,8 +515,8 @@ class Naoko(object):
                                    "d"                 : self.dice,
                                    "dice"              : self.dice,
                                    "addrandom"         : self.addRandom,
-                                   "translate"         : self.translate,
-                                   "cleverbot"         : self.cleverbot}
+                                   "cleverbot"         : self.cleverbot,
+                                   "translate"         : self.translate}
 
     # Handle chat commands from both IRC and Synchtube
     def chatCommand(self, user, msg, irc=False):
@@ -1166,10 +1173,11 @@ class Naoko(object):
             self.asLeader(banUser)
 
     def cleverbot(self, command, user, data):
+        if not hasattr(self.cbclient, "cleverbot"): return
         text = data.strip()
         if text:
             def clever():
-                self.enqueueMsg("[%s] %s" % (user.nick, self.apiclient.cleverbot(text)))
+                self.enqueueMsg("[%s] %s" % (user.nick, self.cbclient.cleverbot(text)))
             self.api_queue.append(clever)
             self.apiAction.set()
 
@@ -1375,7 +1383,7 @@ class Naoko(object):
         vids = self.dbclient.getVideos(num, ['type', 'id', 'title', 'duration_ms'], ('RANDOM()',))
         self.logger.debug("Retrieved %s", vids)
         for v in vids:
-            self.send("am", [v[0], v[1], v[2],"http://i.ytimg.com/vi/%s/default.jpg" % (v[1]), v[3]/1000])
+            self.send("am", [v[0], v[1], self.filterString(v[2])[1],"http://i.ytimg.com/vi/%s/default.jpg" % (v[1]), v[3]/1000])
 
     # Add the video described by v
     def _addVideo(self, v, sql=True):

@@ -11,20 +11,11 @@
 
 import json
 import logging
-from hashlib import md5
 from urllib import urlencode
 from httplib import HTTPConnection, HTTPSConnection
-from collections import OrderedDict
 
 from settings import *
 
-cleverbot_keys = ["stimulus","start","sessionid","vText8","vText7","vText6","vText5",
-                "vText4","vText3","vText2","icognoid","icognocheck","fno","prevref",
-                "emotionaloutput","emotionalhistory","asbotname","ttsvoice",
-                "typing","lineref","sub","islearning","cleanslate"]
-cleverbot_response_keys = ["stimulus", "sessionid", "", "vText8", "vText7", "vText6", "vText5",
-                        "vText4", "vText3", "vText2", "prevref","","","","","","","","","","","","",""]
-cleverbot_start_vals = ["","y","","","","","","","","","wsf","","0","","","","","","","","Say","1","false"]
 
 # A client for all the various APIs used by Naoko
 # Responsible for making requests and returning responses
@@ -34,47 +25,18 @@ class APIClient(object):
         self.logger.setLevel(LOG_LEVEL)
         self.logger.debug("Initializing APIClient")
         self.keys = keys
-        self.clever = OrderedDict(zip(cleverbot_keys, cleverbot_start_vals))
     
     def getVideoInfo(self, site, vid):
         if site == "yt":
             return self._getYoutubeVideoInfo(vid)
-        elif site == "dm" or site == "sc" or site == "vm":
-            # Support for these sites (and maybe blip.tv) forthcoming.
+        elif site == "dm" or site == "sc" or site == "vm" or site == "bt":
+            # Support for these sites  forthcoming.
             return "TODO"
         else:
             return "Unknown"
 
-    # Cleverbot
-    # Some details taken from https://gist.github.com/967404
-    def cleverbot(self, text):
-        con = HTTPConnection("www.cleverbot.com", timeout=10)
-        headers = { "Origin"        : "http://cleverbot.com",
-                    "Referer"       : "http://cleverbot.com/",
-                    "Content-Type"  : "application/x-www-form-urlencoded",
-                    "Cache-Control" : "no-cache"}
-        self.clever["stimulus"] = text
-        data = None
-        try:
-            self.clever["icognocheck"] = md5(urlencode(self.clever)[9:29]).hexdigest()
-            con.request("POST", "/webservicemin", urlencode(self.clever), headers)
-            data = con.getresponse().read()
-            if data.find("<!-- too busy -->") != -1:
-                data = "Cleverbot is too busy."
-            else:
-                data = data.split("\r")
-                self.clever.update(((k,v) for k, v in zip(cleverbot_response_keys, data) if k))
-                data = self.clever["stimulus"]
-        except Exception as e:
-            self.logger.warning("Cleverbot Error")
-            self.logger.debug(e)
-            data = "Error communicating with Cleverbot."
-        finally:
-            con.close()
-            return data
-
     # Translates text from src to dst.
-    # If srcLang is None the Microsoft Translator will attempt to guess the language.
+    # If src is None the Microsoft Translator will attempt to guess the language.
     # Returns -1 if there's no id or secret to use to get an access token.
     def translate(self, text, src, dst):
         if not self.keys.mst_id or not self.keys.mst_secret: return -1
@@ -141,8 +103,8 @@ class APIClient(object):
 
     def _getYoutubeAPIVidInfo(self, vid):
         self.logger.debug("Retrieving video information from the Youtube API.")
-        con = HTTPSConnection("gdata.youtube.com", 443, timeout=10)
-        params = {'v' : 2, 'alt': 'jsonc'}
+        con = HTTPSConnection("gdata.youtube.com", timeout=10)
+        params = {"v" : 2, "alt": "jsonc"}
         data = None
         try:
             con.request("GET", "/feeds/api/videos/%s?%s" % (vid, urlencode(params)))
@@ -151,6 +113,19 @@ class APIClient(object):
             # Many things can go wrong with an HTTP request or during JSON parsing
             self.logger.warning("Error retrieving Youtube API information.")
             self.logger.debug(e)
+        finally:
+            con.close()
+            return data
+
+    def _getBliptvAPIVidInfo(self, vid):
+        self.logger.debug("Retrieving video information from the Blip.tv API.")
+        con = HTTPConnection("blip.tv", timeout = 10)
+        params = {"version" : 2, "skin" : "json"}
+        data = None
+        try:
+            con.request("GET", "/file/%s?%s" % (vid, urlencode(params)))
+        except Exception as e:
+            pass
         finally:
             con.close()
             return data
