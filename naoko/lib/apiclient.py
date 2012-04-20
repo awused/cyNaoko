@@ -134,22 +134,25 @@ class APIClient(object):
         params = {"fields", "title,duration,allow_embed"}
         data = None
         try:
-            con.request("GET", "/video/%s?fields=title,duration,allow_embed" % (vid))
-            data = json.loads(con.getresponse().read())
-            #a = subprocess.check_output(["curl", "-k", "-s", "-m 10", "https://api.dailymotion.com/video/xf0akg?fields=title,duration,allow_embed"])
-        except SSLError as e:
-            # There is a bug in OpenSSL 1.0.1 which affects Python 2.7 on systems that rely on it.
-            # Attempt to use curl as a fallback.
-            # Curl must be installed.
-            # This is the worst hack I have ever coded.
-            self.logger.warning("SSL Error, attempting to use curl as a fallback.")
             try:
-                data = subprocess.check_output(["curl", "-k", "-s", "-m 10",
+                con.request("GET", "/video/%s?fields=title,duration,allow_embed" % (vid))
+                data = con.getresponse().read()
+            except SSLError as e:
+                # There is a bug in OpenSSL 1.0.1 which affects Python 2.7 on systems that rely on it.
+                # Attempt to use curl as a fallback.
+                # Curl must be installed for this to work.
+                # This is the worst hack I have ever coded.
+                # Since vid is a valid video id there is no risk of any attack.
+                self.logger.warning("SSL Error, attempting to use curl as a fallback.")
+                try:
+                    data = subprocess.check_output(["curl", "-k", "-s", "-m 10",
                         "https://api.dailymotion.com/video/%s?fields=title,duration,allow_embed" % (vid)])
-                data = json.loads(data)
-            except Exception as e:
-                self.logger.warning("Fallback failed.")
-                data = "SSL Failure"
+                except Exception as e:
+                    self.logger.warning("Curl fallback failed.")
+                    data = "SSL Failure"
+                    raise e
+            # Do this last and separately to avoid catching it elsewhere.
+            data = json.loads(data)
         except Exception as e:
             # Many things can go wrong with an HTTP request or during JSON parsing
             self.logger.warning("Error retrieving Dailymotion API information.")
