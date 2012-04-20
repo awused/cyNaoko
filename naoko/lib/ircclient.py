@@ -2,6 +2,7 @@
 
 import logging
 import socket
+import re
 
 from settings import *
 
@@ -37,7 +38,19 @@ class IRCClient(object):
         self.send("QUIT :quit\n")
         self.sock.close()
 
-    def sendMsg(self, msg):
+    def filterMsg(self, msg):
+        # Reverts some transformations performed by Synchtube. For now
+        # Only converts youtube thumbnails to youtube video links.
+        # (This also makes it impossible to legitimately link a
+        # youtube thumbnail... but really?)
+
+        msg = re.sub(r'http://i.ytimg.com/vi/([a-zA-Z0-9_\-\+\.]+)/default.jpg',
+                     r'http://www.youtube.com/watch?v=\1',
+                     msg)
+        return msg
+
+    def sendMsg (self, msg):
+        msg = self.filterMsg(msg)
         self.send("PRIVMSG " + self.channel + " :" + msg + "\n")
 
     def recvMessage(self):

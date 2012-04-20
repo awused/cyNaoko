@@ -13,7 +13,7 @@ class ReplConn(object):
         self.conn = conn
 
     def write(self, s):
-        self.conn.send(s)
+        self.conn.send(s.encode("utf-8"))
 
     def read(self, prompt):
         self.conn.send(prompt)

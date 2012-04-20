@@ -2,6 +2,8 @@
 
 import json
 import logging
+import subprocess
+from ssl import SSLError
 from urllib import urlencode
 from httplib import HTTPConnection, HTTPSConnection
 
@@ -22,7 +24,11 @@ class APIClient(object):
             return self._getYoutubeVideoInfo(vid)
         elif site == "bt":
             return self._getBliptvVideoInfo(vid)
-        elif site == "sc" or site == "vm" or site == "dm":
+        elif site == "sc":
+            return self._getSoundcloudVideoInfo(vid)
+        elif site == "vm":
+            return self._getVimeoVideoInfo(vid)
+        elif site == "dm":
             # Support for these sites  forthcoming.
             return "TODO"
         else:
@@ -64,8 +70,8 @@ class APIClient(object):
     def _getMSTAccessToken(self):
         self.logger.debug("Retrieving Microsoft Translate access token.")
         con = HTTPSConnection("datamarket.accesscontrol.windows.net", timeout=10)
-        body = {"client_id"         : self.keys.mst_id.encode("utf-8"),
-                "client_secret"     : self.keys.mst_secret.encode("utf-8"),
+        body = {"client_id"         : self.keys.mst_id,
+                "client_secret"     : self.keys.mst_secret,
                 "grant_type"        : "client_credentials",       
                 "scope"             : "http://api.microsofttranslator.com"}
         accessToken = None
@@ -105,6 +111,102 @@ class APIClient(object):
         except Exception as e:
             # Many things can go wrong with an HTTP request or during JSON parsing
             self.logger.warning("Error retrieving Youtube API information.")
+            self.logger.debug(e)
+        finally:
+            con.close()
+            return data
+
+    def _getDailymotionVideoInfo(self, vid):
+        data = self._getDailymotionAPI(vid) 
+        if isinstance(data, dict) and not "error" in data:
+            try:
+                return (data["title"], data["duration"], data["allow_embed"])
+            except (TypeError, ValueError, KeyError) as e:
+                self.logger.warning("Invalid Dailymotion API response.")
+        # If 
+        if data == "SSL Failure":
+            return "Unknown"
+        return False
+
+    def _getDailymotionAPI(self, vid):
+        self.logger.debug("Retrieving video information from the Dailymotion API.")
+        con = HTTPSConnection("api.dailymotion.com", timeout=10)
+        params = {"fields", "title,duration,allow_embed"}
+        data = None
+        try:
+            con.request("GET", "/video/%s?fields=title,duration,allow_embed" % (vid))
+            data = json.loads(con.getresponse().read())
+            #a = subprocess.check_output(["curl", "-k", "-s", "-m 10", "https://api.dailymotion.com/video/xf0akg?fields=title,duration,allow_embed"])
+        except SSLError as e:
+            # There is a bug in OpenSSL 1.0.1 which affects Python 2.7 on systems that rely on it.
+            # Attempt to use curl as a fallback.
+            # Curl must be installed.
+            # This is the worst hack I have ever coded.
+            self.logger.warning("SSL Error, attempting to use curl as a fallback.")
+            try:
+                data = subprocess.check_output(["curl", "-k", "-s", "-m 10",
+                        "https://api.dailymotion.com/video/%s?fields=title,duration,allow_embed" % (vid)])
+                data = json.loads(data)
+            except Exception as e:
+                self.logger.warning("Fallback failed.")
+                data = "SSL Failure"
+        except Exception as e:
+            # Many things can go wrong with an HTTP request or during JSON parsing
+            self.logger.warning("Error retrieving Dailymotion API information.")
+            self.logger.debug(e)
+        finally:
+            con.close()
+            return data
+
+    def _getSoundcloudVideoInfo(self, vid):
+        if not self.keys.sc_id: return "Unknown"
+        data = self._getSoundcloudAPI(vid)
+        if isinstance(data, dict):
+            try:
+                if not "errors" in data:
+                    return (data["title"], data["duration"]/1000.0, data["sharing"] == "public")
+                elif json.dumps(data, encoding="utf-8").find("401 - Unauthorized") != -1:
+                    return "Unknown"
+            except (TypeError, ValueError, KeyError, UnicodeDecodeError) as e:
+                self.logger.warning("Invalid Soundcloud API response.")
+        return False
+
+    def _getSoundcloudAPI(self, vid):
+        self.logger.debug("Retrieving track information from the Soundcloud API.")
+        con = HTTPSConnection("api.soundcloud.com", timeout=10)
+        params = {"client_id" : self.keys.sc_id}
+        data = None
+        try:
+            con.request("GET", "/tracks/%s.json?%s" % (vid, urlencode(params)))
+            data = json.loads(con.getresponse().read())
+        except Exception as e:
+            # Many things can go wrong with an HTTP request or during JSON parsing
+            self.logger.warning("Error retrieving Soundcloud API information.")
+            self.logger.debug(e)
+        finally:
+            con.close()
+            return data
+
+    def _getVimeoVideoInfo(self, vid):
+        data = self._getVimeoAPI(vid)
+        if isinstance(data, list):
+            try:
+                data = data[0]
+                return (data["title"], data["duration"], data["embed_privacy"] == "anywhere")
+            except (TypeError, ValueError, KeyError) as e:
+                self.logger.warning("Invalid Vimeo API response.")
+        return False
+
+    def _getVimeoAPI(self, vid):
+        self.logger.debug("Retrieving video information from the Vimeo API.")
+        con = HTTPConnection("vimeo.com")
+        data = None
+        try:
+            con.request("GET", "/api/v2/video/%s.json" % (vid))
+            data = json.loads(con.getresponse().read())
+        except Exception as e:
+            # Many things can go wrong with an HTTP request or during JSON parsing
+            self.logger.warning("Error retrieving Vimeo API information.")
             self.logger.debug(e)
         finally:
             con.close()

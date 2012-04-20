@@ -407,14 +407,14 @@ class Naoko(object):
                 if not self.state.pauseTime < 0:
                     unpause = self.state.pauseTime - (self.state.time / 1000)
                 self.pauseTime = -1.0
-                self.logger.info("Unpausing video %f seconds from the beginning" % (unpause))
+                self.logger.info("Unpausing video %.3f seconds from the beginning" % (unpause))
                 self.send("s", [1, unpause])
                 sleepTime = 60
             if self.state.state == 0:
                 if not self.leading.isSet(): continue
                 self.send("s", [1,0])
                 sleepTime = 60
-            self.logger.debug("Waiting %f seconds for the end of the video" % (sleepTime))
+            self.logger.debug("Waiting %.3f seconds for the end of the video" % (sleepTime))
             if not self.playerAction.wait(sleepTime):
                 if self.closing.isSet(): break
                 if not self.leading.isSet(): continue
@@ -1241,16 +1241,20 @@ class Naoko(object):
     # Returns whether or not a video id could possibly be valid
     # Guards against possible attacks and annoyances
     def checkVideoId(self, vi):
-        if type(vi.vid) is int:
-            return True
-        if type(vi.vid) is not str and type(vi.vid) is not unicode:
-            return False
+        if not vi.vid: return False
+
+        vid = vi.vid
+        if type(vid) is not str and type(vid) is not unicode:
+            vid = str(vid)
+
         if vi.site == "yt":
-            return re.match("^[a-zA-Z0-9\-_]+$", vi.vid)
+            return re.match("^[a-zA-Z0-9\-_]+$", vid)
         elif vi.site == "dm":
-            return re.match("^[a-zA-A0-9]+$", vi.vid)
-        elif vi.site == "sc" or vi.site == "vm":
-            return re.match("^[0-9]+$", vi.vid)
+            return re.match("^[a-zA-A0-9]+$", vid)
+        elif vi.site == "sc": 
+            return (type(vi.vid) is int or type(vi.vid) is long) and re.match("^[0-9]+$", vid)
+        elif vi.site == "vm":
+            return re.match("^[0-9]+$", vid)
         else:
             return True
 
@@ -1306,7 +1310,7 @@ class Naoko(object):
                     return "Embedding disabled." 
                 # When someone has manually added a video with an incorrect duration
                 elif self.state.dur != dur:
-                    self.logger.debug("Duration mismatch: %d expected, %d actual." % (self.state.dur, dur))
+                    self.logger.debug("Duration mismatch: %d expected, %.3f actual." % (self.state.dur, dur))
                     self.state.dur = dur
                     self.playerAction.set()
             return None
@@ -1344,9 +1348,9 @@ class Naoko(object):
     
     def _sqlInsertVideo(self, v, title, dur):
         vi = v.vidinfo
-        self.db_logger.debug("Inserting %s into videos", (vi.site, vi.vid, dur * 1000, title))
+        self.db_logger.debug("Inserting %s into videos", (vi.site, vi.vid, int(dur * 1000), title))
         self.db_logger.debug("Inserting %s into video_stats", (vi.site, vi.vid, v.nick))
-        self.dbclient.execute("INSERT OR IGNORE INTO videos VALUES(?, ?, ?, ?)", (vi.site, vi.vid, dur * 1000, title))
+        self.dbclient.execute("INSERT OR IGNORE INTO videos VALUES(?, ?, ?, ?)", (vi.site, vi.vid, int(dur * 1000), title))
         self.dbclient.execute("INSERT INTO video_stats VALUES(?, ?, ?)", (vi.site, vi.vid, v.nick))
         self.dbclient.commit()
         
@@ -1382,7 +1386,15 @@ class Naoko(object):
         vids = self.dbclient.getVideos(num, ['type', 'id', 'title', 'duration_ms'], ('RANDOM()',))
         self.logger.debug("Retrieved %s", vids)
         for v in vids:
-            self.send("am", [v[0], v[1], self.filterString(v[2])[1],"http://i.ytimg.com/vi/%s/default.jpg" % (v[1]), v[3]/1000])
+            vid = v[1]
+            # Soundcloud must take the video id as an integer.
+            # TODO -- Confirm that this is the case an not a coincidence.
+            if v[0] == "sc":
+                try:
+                    vid = int(v[1])
+                except Exception:
+                    continue
+            self.send("am", [v[0], vid, self.filterString(v[2])[1],"http://i.ytimg.com/vi/%s/default.jpg" % (v[1]), v[3]/1000.0])
 
     # Add the video described by v
     def _addVideo(self, v, sql=True):
