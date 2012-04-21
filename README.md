@@ -2,6 +2,10 @@
 
 ## Requirements
 - Naoko was developed using Python 2.7.2
+- Due to a bug in OpenSSL 1.0.1 and its interface with Python 2.7.2 communicating with the Dailymotion API on Linux some functionarlity requires curl to be installed.
+    Without curl installed Naoko will be unable to verify Dailymotion videos or properly handle removed videos or videos with embedding disabled.
+    She will wait DEFAULT_WAIT, which is set to 3 hours, if a leader changes to a Dailymotion video bypassing the playlist so curl is strongly recommended.
+    This bug does not affect Windows users and they will not need to install any additional programs.
 
 ## Usage
 <pre>
@@ -10,7 +14,7 @@
   python naoko/main.py
 </pre>
 
-Edit the included `naoko.conf` file to control the settings. By default the bot will join room "Denshi" with the nick "DenshiBot"
+Edit the included `naoko.conf` file to control the settings. By default the bot will join room "Science" with the nick "DenshiBot"
 
 ## History by Falaina
 This is just a small explanation on how this code relates to the bot that used to be in the synchtube animu room.

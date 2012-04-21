@@ -1251,9 +1251,7 @@ class Naoko(object):
             return re.match("^[a-zA-Z0-9\-_]+$", vid)
         elif vi.site == "dm":
             return re.match("^[a-zA-A0-9]+$", vid)
-        elif vi.site == "sc": 
-            return (type(vi.vid) is int or type(vi.vid) is long) and re.match("^[0-9]+$", vid)
-        elif vi.site == "vm":
+        elif vi.site == "vm" or vi.site == "sc":
             return re.match("^[0-9]+$", vid)
         else:
             return True
@@ -1303,7 +1301,7 @@ class Naoko(object):
     def _checkVideo(self, vi):
         data = self.apiclient.getVideoInfo(vi.site, vi.vid)
         if data:
-            if data != "Unknown" and data != "TODO":
+            if data != "Unknown":
                 title, dur, embed = data
                 if not embed:
                     self.logger.debug("Embedding disabled.")
@@ -1330,8 +1328,7 @@ class Naoko(object):
         if valid:
             data = self.apiclient.getVideoInfo(vi.site, vi.vid)
             if data and data != "Unknown":
-                if data != "TODO":
-                    title, dur, valid = data
+                title, dur, valid = data
             else:
                 # Do not store the video if it is invalid or from an unknown website.
                 valid = False
@@ -1386,15 +1383,7 @@ class Naoko(object):
         vids = self.dbclient.getVideos(num, ['type', 'id', 'title', 'duration_ms'], ('RANDOM()',))
         self.logger.debug("Retrieved %s", vids)
         for v in vids:
-            vid = v[1]
-            # Soundcloud must take the video id as an integer.
-            # TODO -- Confirm that this is the case an not a coincidence.
-            if v[0] == "sc":
-                try:
-                    vid = int(v[1])
-                except Exception:
-                    continue
-            self.send("am", [v[0], vid, self.filterString(v[2])[1],"http://i.ytimg.com/vi/%s/default.jpg" % (v[1]), v[3]/1000.0])
+            self.send("am", [v[0], v[1], self.filterString(v[2])[1],"http://i.ytimg.com/vi/%s/default.jpg" % (v[1]), v[3]/1000.0])
 
     # Add the video described by v
     def _addVideo(self, v, sql=True):

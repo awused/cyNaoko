@@ -29,8 +29,7 @@ class APIClient(object):
         elif site == "vm":
             return self._getVimeoVideoInfo(vid)
         elif site == "dm":
-            # Support for these sites  forthcoming.
-            return "TODO"
+            return self._getDailymotionVideoInfo(vid)
         else:
             return "Unknown"
 
@@ -123,7 +122,7 @@ class APIClient(object):
                 return (data["title"], data["duration"], data["allow_embed"])
             except (TypeError, ValueError, KeyError) as e:
                 self.logger.warning("Invalid Dailymotion API response.")
-        # If 
+        # If both the initial request and the curl fallback failed, treat the video as unknown. 
         if data == "SSL Failure":
             return "Unknown"
         return False
