@@ -503,7 +503,8 @@ class Naoko(object):
                                 "addrandom"         : self.addRandom,
                                 "purge"             : self.purge,
                                 "cleverbot"         : self.cleverbot,
-                                "translate"         : self.translate}
+                                "translate"         : self.translate,
+                                "wolfram"           : self.wolfram}
 
     def _initIRCCommandHandlers(self):
         self.ircCommandHandlers = {"status"            : self.status,
@@ -515,7 +516,8 @@ class Naoko(object):
                                    "dice"              : self.dice,
                                    "addrandom"         : self.addRandom,
                                    "cleverbot"         : self.cleverbot,
-                                   "translate"         : self.translate}
+                                   "translate"         : self.translate,
+                                   "wolfram"           : self.wolfram}
 
     # Handle chat commands from both IRC and Synchtube
     def chatCommand(self, user, msg, irc=False):
@@ -933,8 +935,12 @@ class Naoko(object):
     def bump(self, command, user, data):
         if not user.mod: return
         target = data.strip()
-        if target:
+        if target == "-unnamed":
+            target = "" 
+        elif target:
             target = self.filterString(data, True)[1]
+            # Don't bump anything if only invalid characters were provided.
+            if not target: return
         else:
             target = user.nick
         target = target.lower()
@@ -1103,13 +1109,13 @@ class Naoko(object):
         if not data: return
         question = data.strip()
         if len(question) == 0: return
-        self.enqueueMsg("[%s] %s" % (question, random.choice(["Yes", "No"])))
+        self.enqueueMsg("[Ask: %s] %s" % (question, random.choice(["Yes", "No"])))
 
     def eightBall(self, command, user, data):
         if not data: return
         question = data.strip()
         if len(question) == 0: return
-        self.enqueueMsg("[8ball %s] %s" % (user.nick, random.choice(eight_choices)))
+        self.enqueueMsg("[8ball: %s] %s" % (question, random.choice(eight_choices)))
 
     # Kick a single user by their name.
     # Two special arguments -unnamed and -unregistered.
@@ -1193,11 +1199,25 @@ class Naoko(object):
         def trans():
             out = self.apiclient.translate(g[5], src, dst)
             if out:
-                if not out == -1:
+                if out != -1:
                     self.enqueueMsg("[%s] %s" % (dst.lower(), out))
             else:
-                self.enqueueMsg("Translate Query Failed")
+                self.enqueueMsg("Translate query failed.")
         self.api_queue.append(trans)
+        self.apiAction.set()
+
+    # Queries the Wolfram Alpha API with the provided string.
+    def wolfram(self, command, user, data):
+        query = data.strip()
+        if not query: return
+        def wolf():
+            out = self.apiclient.wolfram(query)
+            if out:
+                if out != -1:
+                    self.enqueueMsg("[%s] %s" % (query, out))
+            else:
+                self.enqueueMsg("Wolfram Alpha query failed.")
+        self.api_queue.append(wolf)
         self.apiAction.set()
 
     # Two functions that search the lists in an efficient manner
@@ -1492,3 +1512,4 @@ class Naoko(object):
         self.apikeys.mst_id = config.get("naoko", "mst_client_id")
         self.apikeys.mst_secret = config.get("naoko", "mst_client_secret")
         self.apikeys.sc_id = config.get("naoko", "sc_client_id")
+        self.apikeys.wf_id = config.get("naoko", "wolfram_id")

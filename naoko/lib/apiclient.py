@@ -84,6 +84,46 @@ class APIClient(object):
             con.close()
             return accessToken
 
+    # Query the Wolfram Alpha API.
+    def wolfram(self, text):
+        if not self.keys.wf_id: return -1
+        data = self._getWolframAPI(text)
+        if type(data) is str or type(data) is unicode:
+            if data.find("success='true'", 0, data.find("<pod ")) != -1:
+                startTag = "<plaintext>"
+                endTag = "</plaintext>"
+                # Try to find a primary pod.
+                # If there is no primary pod pick the first pod after the input pod.
+                startIndex = data.find("primary='true'")
+                if startIndex == -1:
+                    startIndex = data.find("id='Input'")
+                    startIndex = data.find("<pod ", startIndex)
+            
+                if startIndex == -1:
+                    return None
+
+                return " ".join(data[data.find(startTag, startIndex) + len(startTag):data.find(endTag, startIndex)].split())
+        return None
+
+    def _getWolframAPI(self, text):
+        self.logger.debug("Querying Wolfram with %r" % (text))
+        # Wolfram Alpha can be fairly slow so a more generous timeout is used.
+        con = HTTPConnection("api.wolframalpha.com", timeout=20)
+        params = {"appid"   : self.keys.wf_id,
+                  "units"   : "metric",
+                  "format"  : "plaintext",
+                  "input"   : text.encode("utf-8")}
+        data = None
+        try:
+            con.request("GET", "/v2/query?%s" % (urlencode(params)))
+            data = con.getresponse().read().decode("utf-8")
+        except Exception as e:
+            self.logger.warning("Failed to retrieve a valid response from the Wolfram Alpha API.")
+            self.logger.debug(e)
+        finally:
+            con.close()
+            return data
+
     # Get information on videos from various video APIs.
     # Take in video ids, and return a tuple containing the title, duration, and whether embedding is allowed.
     # Return False when a video is invalid or the API response is malformed.
