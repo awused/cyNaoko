@@ -114,7 +114,10 @@ class Naoko(object):
         self.pending = {}
         self.leader_sid = None
         self.pendingToss = False
+        self.deferredToss = False
         self.muted = False
+        self.verboseBanlist = False
+        self.unbanTarget = None
         self.banTracker = {}
         
         # Keep all the state information together
@@ -249,7 +252,7 @@ class Naoko(object):
             except Exception as e:
                 self.logger.error(e)
                 status = False
-            self.logger.debug("Status is %s", status)
+            #self.logger.debug("Status is %s", status)
             if status and pipe:
                 pipe.send("HEALTHY")
             if not status:
@@ -391,30 +394,30 @@ class Naoko(object):
             if sleepTime < 0:
                 sleepTime = 0
             if not self.state.current:
-                self.enqueueMsg("Unknown video playing, skipping")
+                self.enqueueMsg("Unknown video playing, skipping.")
                 self.nextVideo()
                 self.state.state = -1
                 sleepTime = 60
-            if self.state.reason:
+            elif self.state.reason:
                 self.enqueueMsg(self.state.reason)
                 self.state.reason = None
                 self.nextVideo()
                 self.state.state = -1
                 sleepTime = 60
             # If the video is paused, unpause it
-            if self.state.state == 2:
+            elif self.state.state == 2:
                 unpause = 0
                 if not self.state.pauseTime < 0:
                     unpause = self.state.pauseTime - (self.state.time / 1000)
                 self.pauseTime = -1.0
-                self.logger.info("Unpausing video %.3f seconds from the beginning" % (unpause))
+                self.logger.info("Unpausing video %.3f seconds from the beginning." % (unpause))
                 self.send("s", [1, unpause])
                 sleepTime = 60
-            if self.state.state == 0:
-                if not self.leading.isSet(): continue
-                self.send("s", [1,0])
+            elif self.state.state == 0:
+                #if not self.leading.isSet(): continue
+                #self.send("s", [1,0])
                 sleepTime = 60
-            self.logger.debug("Waiting %.3f seconds for the end of the video" % (sleepTime))
+            self.logger.debug("Waiting %.3f seconds for the end of the video." % (sleepTime))
             if not self.playerAction.wait(sleepTime):
                 if self.closing.isSet(): break
                 if not self.leading.isSet(): continue
@@ -475,7 +478,8 @@ class Naoko(object):
                          "playlist"         : self.playlist,
                          "shuffle"          : self.shuffle,
                          "initdone"         : self.ignore,
-                         "clear"            : self.clear}
+                         "clear"            : self.clear,
+                         "banlist"          : self.banlist}
 
     def _initCommandHandlers(self):
         self.commandHandlers = {"restart"           : self.restart,
@@ -504,7 +508,9 @@ class Naoko(object):
                                 "purge"             : self.purge,
                                 "cleverbot"         : self.cleverbot,
                                 "translate"         : self.translate,
-                                "wolfram"           : self.wolfram}
+                                "wolfram"           : self.wolfram,
+                                "unban"             : self.unban,
+                                "banlist"           : self.getBanlist}
 
     def _initIRCCommandHandlers(self):
         self.ircCommandHandlers = {"status"            : self.status,
@@ -543,7 +549,6 @@ class Naoko(object):
                 self.logger.warn("No handler for %s [%s]", command, arg)
         else:
             fn(command, user, arg)
-
 
 
     def nextVideo(self):
@@ -622,18 +627,20 @@ class Naoko(object):
             buf = json.dumps(buf, encoding="iso-8859-15")
         self.client.send(3, data=buf)
 
-    def asLeader(self, action=None, giveBack=True):
+    def asLeader(self, action=None, giveBack=True, deferred=False):
         self.leader_queue.append(action)
         if self.leader_sid and self.leader_sid != self.sid and giveBack and not self.pendingToss:
             oldLeader = self.leader_sid
             def tossLeader():
                 self._tossLeader(oldLeader)
             self.pendingToss = True
+            self.deferredToss = deferred
             self.tossLeader = tossLeader
         if self.room_info["tv?"] and giveBack and not self.pendingToss:
             def turnOnTV():
                 self.send("turnon_tv")
             self.pendingToss = True
+            self.deferredToss = deferred
             self.tossLeader = turnOnTV
         self.takeLeader()
 
@@ -653,7 +660,7 @@ class Naoko(object):
         if not self.checkVideoId(vidinfo):
             self.invalidVideo("Invalid video ID.")
             return
-            
+         
         def check():
             self.invalidVideo(self._checkVideo(vidinfo))
         self.api_queue.append(check)
@@ -739,7 +746,7 @@ class Naoko(object):
     def changeState(self, tag, data):
         self.logger.debug("State is %s %s", tag, data)
         if data == None:
-            # Just assume whatever is loaded is playing correctly
+            # Just assume whatever is loaded is playing correctly.
             if tag == "cm":
                 self.state.state = 1
             else:
@@ -757,8 +764,15 @@ class Naoko(object):
         self.playerAction.set()
 
     def play(self, tag, data):
-        if self.leading.isSet() and (not self.state.previous == None) and (not self.getVideoIndexById(self.state.previous) == None):
-            self.send("rm", self.state.previous)
+        if self.leading.isSet() or self.deferredToss:
+            if (not self.state.previous == None) and (not self.getVideoIndexById(self.state.previous) == None):
+                self.send("rm", self.state.previous)
+            self.send("s", [1,0])
+            if self.deferredToss:
+                self.tossLeader()
+                self.pendingToss = False
+                self.deferredToss = False
+            
         self.state.previous = None
         self.state.current = data[1]
         index = self.getVideoIndexById(self.state.current)
@@ -839,6 +853,35 @@ class Naoko(object):
         else:
             self.send("takeleader", self.sid)
 
+    def banlist(self, tag, data):
+        if not self.unbanTarget:
+            # If there is no pending unban simply display the list.
+            out = []
+            for ban in data:
+                if not self.verboseBanlist:
+                    out.append(self.filterString(ban[0], True)[1])
+                else:
+                    out.append("%s %s" % (self.filterString(ban[0], True)[1], ban[1]))
+            self.verboseBanlist = False
+            self.enqueueMsg("Banlist: %s" % (", ".join(out)))
+        else:
+            # If there is a pending unban perform it if a target can be found.
+            self.logger.info("Unbanning %s" % (self.unbanTarget))
+            target = None
+            for ban in data:
+                if self.unbanTarget.lower() == ban[0].lower():
+                    self.unbanTarget = ban[1]
+                if self.unbanTarget == ban[1]:
+                    target = ban[1]
+                    break
+            if target and self.leader_sid == self.sid:
+                self.send("unban", {"id": target})
+            self.unbanTarget = None
+            if self.deferredToss:
+                self.tossLeader()
+                self.deferredToss = False
+                self.pendingToss = False
+
     def chat(self, tag, data):
         sid = data[0]
         user = self.userlist[sid]
@@ -881,9 +924,7 @@ class Naoko(object):
 
     def skip(self, command, user, data):
         if not user.mod: return
-        # Due to the complexities of switching videos she does not give back the leader after this
-        # TODO - Make it so she does
-        self.asLeader(self.nextVideo, False)
+        self.asLeader(self.nextVideo, deferred=True)
 
     def mute(self, command, user, data):
         if user.mod:
@@ -1176,6 +1217,22 @@ class Naoko(object):
             def banUser():
                 self._banUser(target.sid, modName=user.nick)
             self.asLeader(banUser)
+
+    def unban(self, command, user, data):
+        if not user.mod: return
+        target = data.strip()
+        if not target: return
+        self.unbanTarget = target
+        self.getBanlist(command, user, data)
+
+    def getBanlist(self, command, user, data):
+        if not user.mod: return
+        if data.strip().lower() == "-v":
+            self.verboseBanlist = True
+        def getBans():
+            self.send("banlist")
+        # If she is trying to unban a user defer the current ban.
+        self.asLeader(getBans, deferred=bool(self.unbanTarget))
 
     def cleverbot(self, command, user, data):
         if not hasattr(self.cbclient, "cleverbot"): return
@@ -1480,7 +1537,7 @@ class Naoko(object):
             raise Exception("_leaderActions should not be called outside the Synchtube thread")
         while len(self.leader_queue) > 0:
             self.leader_queue.popleft()()
-        if self.pendingToss:
+        if self.pendingToss and not self.deferredToss:
             self.tossLeader()
             self.pendingToss = False
 
