@@ -226,6 +226,7 @@ class Naoko(object):
             self.ircthread.start()
 
         if self.dbfile:
+            self.sql_queue = deque()
             self.sqlthread = threading.Thread(target=Naoko._sqlloop, args=[self])
             self.sqlthread.start()
 
@@ -252,7 +253,6 @@ class Naoko(object):
             except Exception as e:
                 self.logger.error(e)
                 status = False
-            #self.logger.debug("Status is %s", status)
             if status and pipe:
                 pipe.send("HEALTHY")
             if not status:
@@ -370,17 +370,17 @@ class Naoko(object):
             self.logger.info("IRC Loop Closed")
             self.close()
 
-    # Responsible for sending chat messages to IRC and Synchtube
-    # Only the $status command and error messages should send a chat message to Synchtube or IRC outside this thread
+    # Responsible for sending chat messages to IRC and Synchtube.
+    # Only the $status command and error messages should send a chat message to Synchtube or IRC outside this thread.
     def _chatloop(self):
         while not self.closing.isSet():
             if self.muted:
                 self.irc_queue.clear()
                 self.st_queue.clear()
             else:
-                if len(self.irc_queue) > 0:
+                if self.irc_queue:
                     self.ircclient.sendMsg(self.irc_queue.popleft())
-                if len(self.st_queue) > 0:
+                if self.st_queue:
                     self.sendChat(self.st_queue.popleft())
             time.sleep(self.spam_interval)
         else:
@@ -404,7 +404,7 @@ class Naoko(object):
                 self.nextVideo()
                 self.state.state = -1
                 sleepTime = 60
-            # If the video is paused, unpause it
+            # If the video is paused, unpause it automatically.
             elif self.state.state == 2:
                 unpause = 0
                 if not self.state.pauseTime < 0:
@@ -414,8 +414,6 @@ class Naoko(object):
                 self.send("s", [1, unpause])
                 sleepTime = 60
             elif self.state.state == 0:
-                #if not self.leading.isSet(): continue
-                #self.send("s", [1,0])
                 sleepTime = 60
             self.logger.debug("Waiting %.3f seconds for the end of the video." % (sleepTime))
             if not self.playerAction.wait(sleepTime):
@@ -431,14 +429,13 @@ class Naoko(object):
         initscript=None
         if self.dbinit:
             initscript=open(self.dbinit).read()
-        self.sql_queue = deque()
+        self.db_logger.info("Starting Database Client")
         self.dbclient = client = NaokoDB(self.dbfile, initscript)
         self.last_random = time.time()
-        self.sql_queue = deque()
         while self.sqlAction.wait():
             if self.closing.isSet(): break
             self.sqlAction.clear()
-            while len(self.sql_queue) > 0:
+            while self.sql_queue:
                 self.sql_queue.popleft()()
         self.logger.info("SQL Loop Closed")
 
@@ -448,7 +445,7 @@ class Naoko(object):
         while self.apiAction.wait():
             if self.closing.isSet(): break
             self.apiAction.clear()
-            while len(self.api_queue) > 0:
+            while self.api_queue:
                 self.api_queue.popleft()()
         self.logger.info("API Loop Closed")
 
@@ -477,7 +474,7 @@ class Naoko(object):
                          "s"                : self.changeState,
                          "playlist"         : self.playlist,
                          "shuffle"          : self.shuffle,
-                         "initdone"         : self.ignore,
+                         "initdone"         : self.storeUserCount,
                          "clear"            : self.clear,
                          "banlist"          : self.banlist}
 
@@ -510,7 +507,8 @@ class Naoko(object):
                                 "translate"         : self.translate,
                                 "wolfram"           : self.wolfram,
                                 "unban"             : self.unban,
-                                "banlist"           : self.getBanlist}
+                                "banlist"           : self.getBanlist,
+                                "removelong"        : self.removeLong}
 
     def _initIRCCommandHandlers(self):
         self.ircCommandHandlers = {"status"            : self.status,
@@ -527,7 +525,7 @@ class Naoko(object):
 
     # Handle chat commands from both IRC and Synchtube
     def chatCommand(self, user, msg, irc=False):
-        if len(msg) == 0 or  msg[0] != '$': return
+        if not msg or msg[0] != '$': return
         
         commands = self.commandHandlers
         if irc:
@@ -556,7 +554,7 @@ class Naoko(object):
         videoIndex = self.getVideoIndexById(self.state.current)
         if videoIndex == None:
             videoIndex = -1
-        if len(self.vidlist) == 0:
+        if not self.vidlist:
             self.sendChat("Video list is empty, restarting.")
             self.close()
         videoIndex = (videoIndex + 1) % len(self.vidlist)
@@ -690,6 +688,7 @@ class Naoko(object):
 
             reason = "[%d times] %s" % (self.banTracker[user.nick], reason)
             if self.banTracker[user.nick] >= 3:
+                self.banTracker.pop(user.nick)
                 def banUser():
                     self._banUser(user.sid, reason)
                 self.asLeader(banUser)
@@ -733,7 +732,6 @@ class Naoko(object):
         self.clear(tag, None)
         for v in data:
             self._addVideo(v, False)
-        #self.logger.debug(pprint(self.vidlist))
 
     def clear(self, tag, data):
         self.vidLock.acquire()
@@ -819,6 +817,7 @@ class Naoko(object):
         userinfo = data[:]
         userinfo.insert(1, 'unnamed')
         self._addUser(userinfo)
+        self.storeUserCount()
 
     def remUser(self, tag, data):
         try:
@@ -827,6 +826,7 @@ class Naoko(object):
                 del self.pending[data]
         except KeyError:
             self.logger.exception("Failure to delete user %s from %s", data, self.userlist)
+        self.storeUserCount()
 
     def users(self, tag, data):
         for u in data:
@@ -916,6 +916,14 @@ class Naoko(object):
         else:
             self.leading.clear()
         self.logger.debug("Leader is %s", self.userlist[data])
+
+    def storeUserCount(self, tag=None, data=None):
+        count = len(self.userlist)
+        storeTime = int(time.time() * 1000)
+        def store():
+            self._sqlInsertUserCount(storeTime, count)
+        self.sql_queue.append(store)
+        self.sqlAction.set()
 
     # Command handlers for commands that users can type in Synchtube chat
     # All of them receive input in the form (command, user, data)
@@ -1029,7 +1037,7 @@ class Naoko(object):
             else:
                 vids.add(key)
             i += 1
-        if len(kill) > 0:
+        if kill:
             def clean():
                 for x in kill:
                     self.send("rm", x)
@@ -1057,7 +1065,7 @@ class Naoko(object):
         params = data.split()
         target = user.nick
         num = 1
-        if len(params) > 0 and user.mod:
+        if params and user.mod:
             target = params[0]
             num = 3
             if len(params) > 1:
@@ -1111,11 +1119,33 @@ class Naoko(object):
         for v in self.vidlist:
             if v.nick.lower() == target and not v.v_sid == self.state.current:
                 kill.append(v.v_sid)
-        if len(kill) > 0:
+        if kill:
             def purge():
                 for x in kill:
                     self.send("rm", x)
             self.asLeader(purge)
+
+    # Removes all videos as long or longer than the provided duration, in minutes.
+    # By default she will not remove videos shorter than 20 minutes.
+    def removeLong(self, command, user, data):
+        if not user.mod: return
+        length = 0
+        try:
+            length = int(data)
+        except (TypeError, ValueError):
+            return
+        if length < 20:
+            return
+        length *= 60
+        kill = []
+        for v in self.vidlist:
+            if v.vidinfo.dur >= length and not v.v_sid == self.state.current:
+                kill.append(v.v_sid)
+        if kill:
+            def removeLong():
+                for x in kill:
+                    self.send("rm", x)
+            self.asLeader(removeLong)
 
     def lock(self, command, user, data):
         if not user.mod: return
@@ -1140,7 +1170,7 @@ class Naoko(object):
     def choose(self, command, user, data):
         if not data: return
         choices = data.strip()
-        if len(choices) == 0: return
+        if not choices: return
         self.enqueueMsg("[Choose: %s] %s" % (choices, random.choice(choices.split())))
 
     def steak(self, command, user, data):
@@ -1149,13 +1179,13 @@ class Naoko(object):
     def ask(self, command, user, data):
         if not data: return
         question = data.strip()
-        if len(question) == 0: return
+        if not question: return
         self.enqueueMsg("[Ask: %s] %s" % (question, random.choice(["Yes", "No"])))
 
     def eightBall(self, command, user, data):
         if not data: return
         question = data.strip()
-        if len(question) == 0: return
+        if not question: return
         self.enqueueMsg("[8ball: %s] %s" % (question, random.choice(eight_choices)))
 
     # Kick a single user by their name.
@@ -1196,11 +1226,11 @@ class Naoko(object):
         self.logger.info("Kick Target %s Requestor %s", target.nick, user.nick)
         if len(args) > 1:
             def kickUser():
-                self._kickUser(target.sid, args[1], False)
+                self._kickUser(target.sid, args[1])
             self.asLeader(kickUser)
         else:
             def kickUser():
-                self._kickUser(target.sid, sendMessage=False)
+                self._kickUser(target.sid)
             self.asLeader(kickUser)
 
     def ban(self, command, user, data):
@@ -1239,7 +1269,7 @@ class Naoko(object):
         text = data.strip()
         if text:
             def clever():
-                self.enqueueMsg("[%s] %s" % (user.nick, self.cbclient.cleverbot(text)))
+                self.enqueueMsg(self.cbclient.cleverbot(text))
             self.api_queue.append(clever)
             self.apiAction.set()
 
@@ -1370,7 +1400,7 @@ class Naoko(object):
         if user.uid:
             auth = 1
         self.db_logger.debug("Inserting %s into bans", (reason, auth, user.nick, int(round(time*1000)), modName))
-        self.dbclient.execute("INSERT INTO bans VALUES(?, ?, ?, ?, ?)", (reason, auth, user.nick, int(round(time*1000)), modName))
+        self.dbclient.executeDML("INSERT INTO bans VALUES(?, ?, ?, ?, ?)", (reason, auth, user.nick, int(round(time*1000)), modName))
         self.dbclient.commit()
 
     # Checks to see if the current video isn't invalid, blocked, or removed
@@ -1424,14 +1454,19 @@ class Naoko(object):
         vi = v.vidinfo
         self.db_logger.debug("Inserting %s into videos", (vi.site, vi.vid, int(dur * 1000), title))
         self.db_logger.debug("Inserting %s into video_stats", (vi.site, vi.vid, v.nick))
-        self.dbclient.execute("INSERT OR IGNORE INTO videos VALUES(?, ?, ?, ?)", (vi.site, vi.vid, int(dur * 1000), title))
-        self.dbclient.execute("INSERT INTO video_stats VALUES(?, ?, ?)", (vi.site, vi.vid, v.nick))
+        self.dbclient.executeDML("INSERT OR IGNORE INTO videos VALUES(?, ?, ?, ?)", (vi.site, vi.vid, int(dur * 1000), title))
+        self.dbclient.executeDML("INSERT INTO video_stats VALUES(?, ?, ?)", (vi.site, vi.vid, v.nick))
+        self.dbclient.commit()
+    
+    def _sqlInsertUserCount(self, timestamp, count):
+        self.db_logger.debug("Inserting %s into user_count", (timestamp, count))
+        self.dbclient.executeDML("INSERT INTO user_count VALUES(?, ?)", (timestamp, count))
         self.dbclient.commit()
         
     def _lastBans(self, nick, num):
         if not nick == "-all":
             rows = self.dbclient.fetch("SELECT timestamp, reason, mod FROM bans WHERE uname = ? COLLATE NOCASE ORDER BY timestamp DESC LIMIT ?", (nick, num))
-            if len(rows) == 0:
+            if not rows:
                 self.enqueueMsg("No recorded bans for %s" % nick)
                 return
             if num > 1:
@@ -1442,7 +1477,7 @@ class Naoko(object):
                 self.enqueueMsg("%s by %s - %s" % (datetime.fromtimestamp(r[0] / 1000).isoformat(' '), r[2], r[1]))
         else:
             rows = self.dbclient.fetch("SELECT timestamp, reason, uname, mod FROM bans ORDER BY timestamp DESC LIMIT ?", (num,))
-            if len(rows) == 0:
+            if not rows:
                 self.enqueueMsg("No recorded bans")
                 return
             if num > 1:

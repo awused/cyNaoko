@@ -126,19 +126,27 @@ class NaokoDB(object):
         Opens a cursor using .cursor and executes stmt.
 
         Returns the open cursor.
+
+        This method should not be directly called unless the returned cursor is handled.
         """
         cur = self.cursor()
         cur.execute(stmt, *args)
-        #self.con.commit()
         return cur
+
+    @dbopen
+    def executeDML(self, stmt, *args):
+        """
+        Executes a statement without returning an open cursor.
+        """
+        with self.execute(stmt, *args):
+            pass
 
     @dbopen
     def commit(self):
         """
         Commits changes to the database.
 
-        This method exists because pythong 2.7.2 introduced a bug when con.commit() is called with a select statement.
-        Also the self.con.commit()s are commented out due to the same bug.
+        This method exists because python 2.7.2 introduced a bug when con.commit() is called with a select statement.
         """
         self.con.commit()
 
@@ -151,21 +159,19 @@ class NaokoDB(object):
         """
         cur = self.cursor()
         cur.executescript(script)
-        #self.con.commit()
         return cur
 
     @dbopen
     def fetch(self, stmt, *args):
         """
-        Opens a cursor using .cursor and executes stmt.
+        Executes stmt and fetches all the rows.
 
-        stmt must be a select statement
+        stmt must be a select statement.
 
         Returns the fetched rows.
         """
-        cur = self.cursor()
-        cur.execute(stmt, *args)
-        return cur.fetchall()
+        with self.execute(stmt, *args) as cur:
+            return cur.fetchall()
 
     def close(self):
         """

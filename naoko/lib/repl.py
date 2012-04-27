@@ -36,7 +36,6 @@ class Repl(threading.Thread):
         self.socket.bind((self.host, self.port))
         self.socket.listen(1)
         self.console = code.InteractiveConsole(locals)
-        print self.console, dir(self.console)
         super(Repl, self).__init__(target=self._replLoop)
 
         # This thread is relatively self contained and no exceptions
