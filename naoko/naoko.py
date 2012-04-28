@@ -119,6 +119,7 @@ class Naoko(object):
         self.verboseBanlist = False
         self.unbanTarget = None
         self.banTracker = {}
+        self.userCountTime = time.time() - USER_COUNT_THROTTLE
         
         # Keep all the state information together
         self.state = Object()
@@ -921,7 +922,9 @@ class Naoko(object):
         count = len(self.userlist)
         storeTime = int(time.time() * 1000)
         def store():
-            self._sqlInsertUserCount(storeTime, count)
+            if time.time() - self.userCountTime > USER_COUNT_THROTTLE:
+                self.userCountTime = time.time()
+                self._sqlInsertUserCount(storeTime, count)
         self.sql_queue.append(store)
         self.sqlAction.set()
 

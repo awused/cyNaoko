@@ -10,3 +10,7 @@ LOG_LEVEL = logging.DEBUG
 
 # Default Wait when an unknown video is playing in seconds.
 DEFAULT_WAIT = 3 * 60 * 60
+
+# The minimum time, in seconds, between storing the count of users in the room.
+# Only increase this if she is logging too often in a busy room and wasting too much space.
+USER_COUNT_THROTTLE = 0
