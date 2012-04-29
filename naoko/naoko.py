@@ -509,7 +509,8 @@ class Naoko(object):
                                 "wolfram"           : self.wolfram,
                                 "unban"             : self.unban,
                                 "banlist"           : self.getBanlist,
-                                "removelong"        : self.removeLong}
+                                "removelong"        : self.removeLong,
+                                "eval"              : self.eval}
 
     def _initIRCCommandHandlers(self):
         self.ircCommandHandlers = {"status"            : self.status,
@@ -522,7 +523,8 @@ class Naoko(object):
                                    "addrandom"         : self.addRandom,
                                    "cleverbot"         : self.cleverbot,
                                    "translate"         : self.translate,
-                                   "wolfram"           : self.wolfram}
+                                   "wolfram"           : self.wolfram,
+                                   "eval"              : self.eval}
 
     # Handle chat commands from both IRC and Synchtube
     def chatCommand(self, user, msg, irc=False):
@@ -1275,6 +1277,9 @@ class Naoko(object):
                 self.enqueueMsg(self.cbclient.cleverbot(text))
             self.api_queue.append(clever)
             self.apiAction.set()
+
+    def eval(self, command, user, data):
+        self.enqueueMsg("You're not the boss of me.")
 
     # Translate a given string.
     # Defaults to translating to English and detecting the source language.
