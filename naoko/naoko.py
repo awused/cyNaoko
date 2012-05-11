@@ -510,7 +510,8 @@ class Naoko(object):
                                 "unban"             : self.unban,
                                 "banlist"           : self.getBanlist,
                                 "removelong"        : self.removeLong,
-                                "eval"              : self.eval}
+                                "eval"              : self.eval,
+                                "setskip"           : self.setSkip}
 
     def _initIRCCommandHandlers(self):
         self.ircCommandHandlers = {"status"            : self.status,
@@ -938,6 +939,36 @@ class Naoko(object):
     def skip(self, command, user, data):
         if not user.mod: return
         self.asLeader(self.nextVideo, deferred=True)
+
+    # Set the skipping mode. Takes either on, off, x, or x%
+    def setSkip(self, command, user, data):
+        if not user.mod: return
+        m = re.match("^((on)|(off)|([1-9][0-9]*)(%)?)( .*)?$", data.strip(), re.IGNORECASE)
+        if m:
+            g = m.groups()
+            if g[1]:
+                if not self.room_info["skip?"]:
+                    settings = None
+                    if "vote_settings" in self.room_info:
+                        settings = self.room_info["vote_settings"]
+                    else:
+                        # If there is no known previous setting, default to 33%.
+                        settings = {"settings" : "percent", "num" : 33}
+                    def skipset():
+                        self.send("skip?", True)
+                        self.send("vote_settings", settings)
+                    self.asLeader(skipset)
+            if g[2]:
+                if self.room_info["skip?"]:
+                    def skipset():
+                        self.send("skip?", False)
+                    self.asLeader(skipset)
+            if g[3]:
+                settings = {"num" : int(g[3]), "settings" : ("percent" if g[4] else "thres")}
+                def skipset():
+                    self.send("skip?", True)
+                    self.send("vote_settings", settings)
+                self.asLeader(skipset)
 
     def mute(self, command, user, data):
         if user.mod:
