@@ -511,7 +511,8 @@ class Naoko(object):
                                 "banlist"           : self.getBanlist,
                                 "removelong"        : self.removeLong,
                                 "eval"              : self.eval,
-                                "setskip"           : self.setSkip}
+                                "setskip"           : self.setSkip,
+                                "help"              : self.help}
 
     def _initIRCCommandHandlers(self):
         self.ircCommandHandlers = {"status"            : self.status,
@@ -525,7 +526,8 @@ class Naoko(object):
                                    "cleverbot"         : self.cleverbot,
                                    "translate"         : self.translate,
                                    "wolfram"           : self.wolfram,
-                                   "eval"              : self.eval}
+                                   "eval"              : self.eval,
+                                   "help"              : self.help}
 
     # Handle chat commands from both IRC and Synchtube
     def chatCommand(self, user, msg, irc=False):
@@ -970,6 +972,9 @@ class Naoko(object):
                     self.send("vote_settings", settings)
                 self.asLeader(skipset)
 
+    def help(self, command, user, data):
+        self.enqueueMsg("I refuse; you are beneath me.")
+
     def mute(self, command, user, data):
         if user.mod:
             self.muted = True
@@ -1117,6 +1122,10 @@ class Naoko(object):
 
     # Deletes the last video added by the provided user
     def delete(self, command, user, data):
+        # Due to the way Synchtube handles videos added by unregistered users they are
+        # unable to delete their own videos. This prevents them abusing it to delete
+        # videos added by registered users.
+        if not user.uid: return
         target = self.filterString(data, True)[1]
         # Non-mods can only delete their own videos
         # This does prevent unregistered users from deleting their own videos
