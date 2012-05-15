@@ -119,6 +119,7 @@ class Naoko(object):
         self.verboseBanlist = False
         self.unbanTarget = None
         self.banTracker = {}
+        self.modList = set()
         self.userCountTime = time.time() - USER_COUNT_THROTTLE
         
         # Keep all the state information together
@@ -179,6 +180,9 @@ class Naoko(object):
             if self.authkey and self.userid:
                 self.config_params['a'] = self.authkey
                 self.config_params['u'] = self.userid
+            if config.has_key("moderators"):
+                for m in config["moderators"]:
+                    self.modList.add(m.lower())
         except:
             self.logger.debug("Config is %s" % (config))
             if config.has_key('error'):
@@ -523,7 +527,6 @@ class Naoko(object):
                                    "steak"             : self.steak,
                                    "d"                 : self.dice,
                                    "dice"              : self.dice,
-                                   "addrandom"         : self.addRandom,
                                    "cleverbot"         : self.cleverbot,
                                    "translate"         : self.translate,
                                    "wolfram"           : self.wolfram,
@@ -946,7 +949,7 @@ class Naoko(object):
     # Set the skipping mode. Takes either on, off, x, or x%
     def setSkip(self, command, user, data):
         if not user.mod: return
-        m = re.match("^((on)|(off)|([1-9][0-9]*)(%)?)( .*)?$", data.strip(), re.IGNORECASE)
+        m = re.match("^((on)|(off)|([1-9][0-9]*)(%)?)( .*)?$", data, re.IGNORECASE)
         if m:
             g = m.groups()
             if g[1]:
@@ -998,7 +1001,7 @@ class Naoko(object):
 
     def dice(self, command, user, data):
         if not data: return
-        params = data.strip().split()
+        params = data.split()
         if len(params) < 2: return
         num = 0
         size = 0
@@ -1025,7 +1028,7 @@ class Naoko(object):
     # If no name is provided it bumps the last video by the user who sent the command
     def bump(self, command, user, data):
         if not user.mod: return
-        target = data.strip()
+        target = data
         if target == "-unnamed":
             target = "" 
         elif target:
@@ -1090,7 +1093,7 @@ class Naoko(object):
         if not (user.mod or len(self.vidlist) <= 10): return
         num = None
         try:
-            num = int(data.strip())
+            num = int(data)
         except (TypeError, ValueError) as e:
             self.logger.debug(e)
         # Default to 5, which is also the most non-mods can add at once 
@@ -1109,7 +1112,6 @@ class Naoko(object):
         num = 1
         if params and user.mod:
             target = params[0]
-            num = 3 if command == "lastbans" else 1
             if len(params) > 1 and command == "lastbans":
                 try:
                     num = int(params[1])
@@ -1126,7 +1128,7 @@ class Naoko(object):
         # Due to the way Synchtube handles videos added by unregistered users they are
         # unable to delete their own videos. This prevents them abusing it to delete
         # videos added by registered users.
-        if not user.uid: return
+        if user.uid == None: return
         target = self.filterString(data, True)[1]
         # Non-mods can only delete their own videos
         # This does prevent unregistered users from deleting their own videos
@@ -1150,17 +1152,13 @@ class Naoko(object):
     # Deletes all the videos posted by the specified user
     def purge(self, command, user, data):
         if not user.mod: return
-        target = self.getUserByNick(data)
-        if target == None:
-            target = self.filterString(data, True)[1].lower()
-            # Don't default to purging unregistered users
-            if target == '':
-                return
-        else:
-            if target.mod: return
-            target = target.nick.lower()
-        if user.mod and data.lower() == "-unnamed":
+        if data.lower() == "-unnamed":
             target = ''
+        else:
+            target = self.filterString(data, True)[1].lower()
+            # Don't default to purging unregistered users, and do not purge mods.
+            if not target or target in self.modList:
+                return
         kill = []
         for v in self.vidlist:
             if v.nick.lower() == target and not v.v_sid == self.state.current:
@@ -1171,15 +1169,19 @@ class Naoko(object):
                     self.send("rm", x)
             self.asLeader(purge)
 
-    # Removes all videos as long or longer than the provided duration, in minutes.
+    # Removes all videos as long or longer than the provided duration.
     # By default she will not remove videos shorter than 20 minutes.
     def removeLong(self, command, user, data):
         if not user.mod: return
+        m = re.match("^(([0-9]*):)?([0-9]*)$", data)
+        if not m: return
         length = 0
-        try:
-            length = int(data)
-        except (TypeError, ValueError):
-            return
+        g = m.groups()
+        if g[1]:
+            length = int(g[1]) * 60
+        if g[2]:
+            length += int(g[2])
+        
         if length < 20:
             return
         length *= 60
@@ -1215,7 +1217,7 @@ class Naoko(object):
 
     def choose(self, command, user, data):
         if not data: return
-        choices = data.strip()
+        choices = data
         if not choices: return
         self.enqueueMsg("[Choose: %s] %s" % (choices, random.choice(choices.split())))
 
@@ -1224,13 +1226,13 @@ class Naoko(object):
 
     def ask(self, command, user, data):
         if not data: return
-        question = data.strip()
+        question = data
         if not question: return
         self.enqueueMsg("[Ask: %s] %s" % (question, random.choice(["Yes", "No"])))
 
     def eightBall(self, command, user, data):
         if not data: return
-        question = data.strip()
+        question = data
         if not question: return
         self.enqueueMsg("[8ball: %s] %s" % (question, random.choice(eight_choices)))
 
@@ -1296,14 +1298,14 @@ class Naoko(object):
 
     def unban(self, command, user, data):
         if not user.mod: return
-        target = data.strip()
+        target = data
         if not target: return
         self.unbanTarget = target
         self.getBanlist(command, user, data)
 
     def getBanlist(self, command, user, data):
         if not user.mod: return
-        if data.strip().lower() == "-v":
+        if data.lower() == "-v":
             self.verboseBanlist = True
         def getBans():
             self.send("banlist")
@@ -1312,7 +1314,7 @@ class Naoko(object):
 
     def cleverbot(self, command, user, data):
         if not hasattr(self.cbclient, "cleverbot"): return
-        text = data.strip()
+        text = data
         if text:
             def clever():
                 self.enqueueMsg(self.cbclient.cleverbot(text))
@@ -1327,7 +1329,7 @@ class Naoko(object):
     # If the string starts with [src->dst], [src>dst], or [dst] where src and dst
     # are ISO two letter language code it will attempt to translate using those codes.
     def translate(self, command, user, data):
-        m = re.match("^(\[(([a-zA-Z]{2})|([a-zA-Z]{2})-?>([a-zA-Z]{2}))\] ?)?(.+)$", data.strip())
+        m = re.match("^(\[(([a-zA-Z]{2})|([a-zA-Z]{2})-?>([a-zA-Z]{2}))\] ?)?(.+)$", data)
         if not m: return
         g = m.groups()
         src = g[3] or None
@@ -1344,7 +1346,7 @@ class Naoko(object):
 
     # Queries the Wolfram Alpha API with the provided string.
     def wolfram(self, command, user, data):
-        query = data.strip()
+        query = data
         if not query: return
         def wolf():
             out = self.apiclient.wolfram(query)
@@ -1445,15 +1447,15 @@ class Naoko(object):
 
     def _sqlInsertBan(self, user, reason, time, modName):
         auth = 0
-        # As found elsewhere, user.auth is unreliable
-        if user.uid:
+        # As found elsewhere, user.auth is unreliable.
+        if not user.uid == None:
             auth = 1
         self.db_logger.debug("Inserting %s into bans", (reason, auth, user.nick, int(round(time*1000)), modName))
         self.dbclient.executeDML("INSERT INTO bans VALUES(?, ?, ?, ?, ?)", (reason, auth, user.nick, int(round(time*1000)), modName))
         self.dbclient.commit()
 
-    # Checks to see if the current video isn't invalid, blocked, or removed
-    # Also updates the duration if necessary to prevent certain types of annoying attacks on the room
+    # Checks to see if the current video isn't invalid, blocked, or removed.
+    # Also updates the duration if necessary to prevent certain types of annoying attacks on the room.
     def _checkVideo(self, vi):
         data = self.apiclient.getVideoInfo(vi.site, vi.vid)
         if data:
@@ -1462,7 +1464,7 @@ class Naoko(object):
                 if not embed:
                     self.logger.debug("Embedding disabled.")
                     return "Embedding disabled." 
-                # When someone has manually added a video with an incorrect duration
+                # When someone has manually added a video with an incorrect duration.
                 elif self.state.dur != dur:
                     self.logger.debug("Duration mismatch: %d expected, %.3f actual." % (self.state.dur, dur))
                     self.state.dur = dur
@@ -1473,7 +1475,6 @@ class Naoko(object):
     # Validates a video before inserting it into the database.
     # Will correct invalid durations and titles for Youtube videos.
     # This makes SQL inserts dependent on the external API.
-    # TODO -- Maybe -- detect if there's a communication error/timeout and let the insertion go through anyway
     def _validateVideoSQLInsert(self, v):
         if str(v.uid) == self.userid: return
         vi = v.vidinfo
@@ -1492,8 +1493,8 @@ class Naoko(object):
             # The video is invalid, don't insert it
             self.logger.debug("Invalid video, skipping SQL insert.")
             return
-        # The insert the video using the retrieved title and duration
-        # Trust the external APIs over Synchtube
+        # The insert the video using the retrieved title and duration.
+        # Trust the external APIs over the Synchtube playlist.
         def insert():
             self._sqlInsertVideo(v, title, dur)
         self.sql_queue.append(insert)
