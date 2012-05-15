@@ -502,6 +502,7 @@ class Naoko(object):
                                 "duplicates"        : self.cleanDuplicates,
                                 "delete"            : self.delete,
                                 "lastbans"          : self.lastBans,
+                                "lastban"           : self.lastBans,
                                 "addrandom"         : self.addRandom,
                                 "purge"             : self.purge,
                                 "cleverbot"         : self.cleverbot,
@@ -1108,8 +1109,8 @@ class Naoko(object):
         num = 1
         if params and user.mod:
             target = params[0]
-            num = 3
-            if len(params) > 1:
+            num = 3 if command == "lastbans" else 1
+            if len(params) > 1 and command == "lastbans":
                 try:
                     num = int(params[1])
                 except (TypeError, ValueError) as e:
