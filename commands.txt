@@ -1,0 +1,126 @@
+﻿Naoko's Commands
+
+All commands and usernames are not case sensitive.
+In the parameters, [] denotes an optional command, | denotes different possible commands, and () denotes grouping to reduce ambiguity.
+None of these characters are used in the command parameters, except in the case of the translate command.
+
+--- All Users ----
+These commands are usable by all users, whether they're in IRC or Synchtube.
+
+8ball question
+    Responds with one of the standard magic eight ball responses to the given question.
+
+ask question
+    Responds yes or no to the given question.
+
+choose choice [choice ...]
+    Chooses one of the given space separated strings randomly.
+
+cleverbot message
+    Sends the message to cleverbot.
+    This requires implementing a communication interface with cleverbot, which is not distributed with Naoko.
+
+dice X Y
+d X Y
+XdY
+    Rolls X Y-sided dice.
+
+status
+    Displays whether Naoko is muted or not. This is displayed even if she is muted.
+
+translate [[bb] | [aa>bb] | [aa->bb]] string
+    Translates the given string from aa, which defaults to detecting the language, to bb, which defaults to en, using Microsoft Translate.
+    The languages aa and bb must be specified as an ISO two letter language code.
+    Note: If source or destination language are provided, they will be provided in the form "[bb]" or "[aa->bb]", including the square brackets. The internal square brackets are part of the parameters.
+
+wolfram query
+    Sends the given query to the Wolfram API and returns the primary or first result.
+
+--- Synchtube Users Only ---
+These commands are usable by both mods and non-mods in the Synchtube chat, but not in IRC.
+
+addrandom X
+    Adds X random videos to the list, where X defaults to five. The maximum value of X for non-mods is five. Non-mods can only use this command when there are ten or less videos in the playlist.
+    This command is throttled so that it can only be called by any user once every five seconds.
+    Less restrictions affect mods.
+
+delete
+    Deletes the last video added by the user who calls this command. This will not delete the currently playing video.
+    Due to how Synchtube handles adding videos for unregistered but named users, no unregistered users can delete their own videos, and this command is disabled for them.
+    More options are available to mods.
+
+lastban
+lastbans
+    Displays the last ban for the name of the user who calls this command, including the time of the ban, the reason, and the name of the mod who initiated the ban.
+    More options are available to mods. Lastbans will only provide a single ban for non-mods, and will also default to one for mods.
+
+--- Synchtube Mods Only ---
+These commands are only available to Synchtube mods in Synchtube chat.
+
+addrandom X
+    Adds X random videos to the list, where X defaults to five. The maximum value of X for mods is 20. Mods can call this regardless of the length of the playlist.
+    The five second limit for successive calls still applies to mods.
+
+ban name [reason]
+    Bans the specified user. The reason, which defaults to "Requested," is not displayed to the user who is being banned, though it is stored in the database.
+
+banlist [-v]
+    Displays the list of currently banned users. If the -v flag is provided it also displays the IDs of the banned users.
+
+bump [name | -unnamed]
+    Bumps the last video added by the specified user to the next spot on the playlist after the current video. If -unnamed is provided it will bump the last video without a name.
+    This includes videos added by any unregistered user, named or unnamed.
+
+clean
+    Cleans the playlist by removing all the videos that are above the current video in the playlist.
+    Naoko does not check or have any way of telling if those videos have actually been played or not.
+
+delete [name | -unnamed]
+    In addition to the functionality outlined above, deletes the last video added by the user with the given name, or the last video added by any unregistered user.
+
+duplicates
+    Deletes duplicate videos from the playlist. Will not remove the currently playing video even if it is a duplicate.
+    Leaves the first occurence of any duplicated video on the list, even if it is above the currently playing video.
+
+kick (name [reason]) | -unnamed | -unregistered
+    Kicks the specified user. The reason, which defaults to "Requested," is displayed to the user who is being kicked.
+    If -unnamed or -unregistered is passed instead, it will kick all unnamed users or all unregistered users at once.
+
+lastban [name | -all]
+lastbans [(name | -all) [X]]
+    Displays the last X bans, where X defaults to 1, of any users with the given name. If -all is provided instead of a name the last X bans for any users will b displayed.
+
+lock
+unlock
+    Locks or unlocks the playlist.
+
+mod name
+    Changes the leader to the user with the given name.
+
+mute
+unmute
+    Mutes or unmutes Naoko. This prevents bridging chat with IRC, and prevents the majority of messages Naoko can send. There are few exceptions, namely a select few error messages and 
+
+purge name | -unnamed
+    Deletes all videos, with the possible exception of the currently playing video, added by the specified user from the playlist.
+    If -unnamed is provided it will delete all videos added by unregistered users.
+    Cannot purge a mod who is in the room. 
+
+removelong hours: | hours:minutes | :minutes | minutes
+    Removes all videos that are at least the specified length. Will not remove any videos shorter than 20 minutes.
+
+restart
+    Restarts Naoko.
+
+setskip on | off | number | percentage
+    Sets the status for voting depending on what is provided. If told to turn on skipping, she will use the previous setting if she has one, otherwise she will default to 33%.
+    It is not necessary to explicitly call setskip on before changing the cutoff point if skipping is turned off.
+
+skip
+    Skips the current video and advances to the next video.
+
+steal
+    Switches the leader to the mod who called this.
+
+unban name | id
+    Unbans the specified user. Can also accept the IDs displayed by banlist -v.
