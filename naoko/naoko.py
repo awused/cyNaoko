@@ -129,7 +129,6 @@ class Naoko(object):
         self.state.time = 0
         self.state.pauseTime = -1.0
         self.state.dur = 0
-        self.state.previous = None
         self.state.reason = None
 
         if self.pw:
@@ -568,10 +567,6 @@ class Naoko(object):
             self.sendChat("Video list is empty, restarting.")
             self.close()
         videoIndex = (videoIndex + 1) % len(self.vidlist)
-        if len(self.vidlist) > 1:
-            self.state.previous = self.state.current
-        else:
-            self.state.previous = None
         self.logger.debug("Advancing to next video [%s]", self.vidlist[videoIndex])
         self.state.time = int(round(time.time() * 1000))
         self.send("s", [2])
@@ -725,7 +720,6 @@ class Naoko(object):
     def changeMedia(self, tag, data):
         self.logger.info("Change media: %s" % (data))
         self.state.current = data[0]
-        self.state.previous = None
         # Prevent her from skipping something she does not recognize, like a livestream.
         # HOWEVER, this will require a mod to tell her to skip before DEFAULT_WAIT seconds.
         self.state.dur = DEFAULT_WAIT
@@ -773,15 +767,14 @@ class Naoko(object):
 
     def play(self, tag, data):
         if self.leading.isSet() or self.deferredToss:
-            if (not self.state.previous == None) and (not self.getVideoIndexById(self.state.previous) == None):
-                self.send("rm", self.state.previous)
+            if len (self.vidlist) > 1 and (not self.state.current == None) and (not self.getVideoIndexById(self.state.current) == None):
+                self.send("rm", self.state.current)
             self.send("s", [1,0])
             if self.deferredToss:
                 self.tossLeader()
                 self.pendingToss = False
                 self.deferredToss = False
             
-        self.state.previous = None
         self.state.current = data[1]
         index = self.getVideoIndexById(self.state.current)
         if index == None:
