@@ -800,11 +800,13 @@ class Naoko(object):
             return
 
         user = self.userlist[sid]
-        if user.nickChanges > 3 or (user.nickChanges > 0 and not nick == oldnick):
+        if user.nickChanges > 5 or (user.nickChanges > 0 and not nick == oldnick):
             if self.pending.has_key(sid) or user.mod or user.sid == self.sid:
                 return
             else:
-                # Only a script/bot can change nicks multiple times
+                # Only a script/bot can change nicks to different nicks multiple times.
+                # It is possible for it to glitch and a user can change to the same nick several times.
+                # In order to reduce false positives while still catching nick flood attempts a threshhold of 5 was chosen.
                 self.pending[sid] = True
                 self.logger.info("Attempted ban of %s for %d nick changes", (user.nick, user.nickChanges))
                 reason = "%s changed names %d times" % (user.nick, user.nickChanges)
