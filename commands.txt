@@ -99,7 +99,7 @@ mod name
 
 mute
 unmute
-    Mutes or unmutes Naoko. This prevents bridging chat with IRC, and prevents the majority of messages Naoko can send. There are few exceptions, namely a select few error messages and 
+    Mutes or unmutes Naoko. This prevents bridging chat with IRC, and prevents the majority of messages Naoko can send. There are few exceptions, namely a select few error messages and the status command.
 
 purge name | -unnamed
     Deletes all videos, with the possible exception of the currently playing video, added by the specified user from the playlist.

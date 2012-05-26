@@ -941,7 +941,7 @@ class Naoko(object):
         if not user.mod: return
         self.asLeader(self.nextVideo, deferred=True)
 
-    # Set the skipping mode. Takes either on, off, x, or x%
+    # Set the skipping mode. Takes either on, off, x, or x%.
     def setSkip(self, command, user, data):
         if not user.mod: return
         m = re.match("^((on)|(off)|([1-9][0-9]*)(%)?)( .*)?$", data, re.IGNORECASE)

@@ -10,7 +10,7 @@ from naoko import Naoko
 from settings import *
 
 # Don't fork too often
-MIN_DUR = 0.25
+MIN_DUR = 2.5
 
 # Set up logging
 logging.basicConfig(format='%(name)-15s:%(levelname)-8s - %(message)s', stream=sys.__stderr__)
