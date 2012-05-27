@@ -906,10 +906,14 @@ class Naoko(object):
             self.logger.info("Attempted kick/ban of %s for spam", user.nick)
             reason = "%s sent %d messages in %1.3f seconds" % (user.nick, len(user.msgs), span)
             self.chatKick(user, reason)
-        elif re.search(r"(synchtube\.com\/r|synchtu\.be\/)", msg): 
-            self.logger.info("Attempted kick/ban of %s for blacklisted phrase", user.nick)
-            reason = "%s sent a blacklisted message" % (user.nick)
-            self.chatKick(user, reason)
+        else:
+            # Currently the only two blacklisted phrases are links to other Synchtube rooms.
+            # Links to the current room or the Synchtube homepage aren't blocked.
+            m = re.search(r"(synchtube\.com\/r\/|synchtu\.be\/)(%s)?" % (self.room), msg)
+            if m and not m.groups()[1]:
+                self.logger.info("Attempted kick/ban of %s for blacklisted phrase", user.nick)
+                reason = "%s sent a blacklisted message" % (user.nick)
+                self.chatKick(user, reason)
     
     def leader(self, tag, data):
         self.leader_sid = data
