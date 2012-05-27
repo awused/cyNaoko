@@ -909,7 +909,7 @@ class Naoko(object):
         else:
             # Currently the only two blacklisted phrases are links to other Synchtube rooms.
             # Links to the current room or the Synchtube homepage aren't blocked.
-            m = re.search(r"(synchtube\.com\/r\/|synchtu\.be\/)(%s)?" % (self.room), msg)
+            m = re.search(r"(synchtube\.com\/r\/|synchtu\.be\/)(%s)?" % (self.room), msg, re.IGNORECASE)
             if m and not m.groups()[1]:
                 self.logger.info("Attempted kick/ban of %s for blacklisted phrase", user.nick)
                 reason = "%s sent a blacklisted message" % (user.nick)
