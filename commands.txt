@@ -55,36 +55,52 @@ lastbans
     More options are available to mods. Lastbans will only provide a single ban for non-mods, and will also default to one for mods.
 
 --- Synchtube Mods Only ---
-These commands are only available to Synchtube mods in Synchtube chat.
+These commands are only available to Synchtube mods in Synchtube chat. Some commands are available to hybrid mods with specific permissions.
+There are no differences between mods and hybrid mods, save only that hybrid mods are not protected from some commands such as ban like real mods are and the kick command.
 
 addrandom X
+    Hybrid mod permission +A.
     Adds X random videos to the list, where X defaults to five. The maximum value of X for mods is 20. Mods can call this regardless of the length of the playlist.
     The five second limit for successive calls still applies to mods.
 
 ban name [reason]
+    Hybrid Mod permission +Q.
     Bans the specified user. The reason, which defaults to "Requested," is not displayed to the user who is being banned, though it is stored in the database.
+    Cannot ban mods.
 
 banlist [-v]
+    Hybrid mod permission +Q.
     Displays the list of currently banned users. If the -v flag is provided it also displays the IDs of the banned users.
 
 bump [name | -unnamed]
+    Hybrid mod permission +B.
     Bumps the last video added by the specified user to the next spot on the playlist after the current video. If -unnamed is provided it will bump the last video without a name.
     This includes videos added by any unregistered user, named or unnamed.
 
 clean
+    Hybrid mod permission +C.
     Cleans the playlist by removing all the videos that are above the current video in the playlist.
     Naoko does not check or have any way of telling if those videos have actually been played or not.
 
 delete [name | -unnamed]
+    Hybrid mod permission +D.
     In addition to the functionality outlined above, deletes the last video added by the user with the given name, or the last video added by any unregistered user.
 
 duplicates
+    Hybrid mod permission +T.
     Deletes duplicate videos from the playlist. Will not remove the currently playing video even if it is a duplicate.
     Leaves the first occurence of any duplicated video on the list, even if it is above the currently playing video.
 
+hybridmods [on | off]
+    Enables or disables hybrid mods if on or off are passed.
+    With neither Naoko will list all the current hybridmods with active permissions.
+    This is written to the hybridmods file so the status will be maintained.
+
 kick (name [reason]) | -unnamed | -unregistered
+    Hybrid mod permission +K.
     Kicks the specified user. The reason, which defaults to "Requested," is displayed to the user who is being kicked.
-    If -unnamed or -unregistered is passed instead, it will kick all unnamed users or all unregistered users at once.
+    If -unnamed or -unregistered is passed instead, it will kick all unnamed users or all unregistered users at once. Only real mods can use these values.
+    Cannot kick mods.
 
 lastban [name | -all]
 lastbans [(name | -all) [X]]
@@ -92,35 +108,70 @@ lastbans [(name | -all) [X]]
 
 lock
 unlock
+    Hybrid mod permission +L.
     Locks or unlocks the playlist.
 
 mod name
+    Hybrid mod permission +O.
     Changes the leader to the user with the given name.
 
 mute
 unmute
+    Hybrid mod permission +M.
     Mutes or unmutes Naoko. This prevents bridging chat with IRC, and prevents the majority of messages Naoko can send. There are few exceptions, namely a select few error messages and the status command.
 
+permissions [(+ | -) (all | flags)] name
+    Give or remove permissions to the specified hybrid mod. Flags for permissions are defined below.
+    If no changes are specified, or if changes do take place, Naoko will display the current permissions of the hybrid mod.
+
 purge name | -unnamed
+    Hybrid mod permission +P.
     Deletes all videos, with the possible exception of the currently playing video, added by the specified user from the playlist.
     If -unnamed is provided it will delete all videos added by unregistered users.
     Cannot purge a mod who is in the room. 
 
 removelong hours: | hours:minutes | :minutes | minutes
-    Removes all videos that are at least the specified length. Will not remove any videos shorter than 20 minutes.
+    Hybrid mod permission +N.
+    Removes all videos that are at least the specified length. Requires that the specified length is equivalent to at least 20 minutes.
 
 restart
+    Hybrid mod permission +R.
     Restarts Naoko.
 
 setskip on | off | number | percentage
+    Hybrid mod permission +E.
     Sets the status for voting depending on what is provided. If told to turn on skipping, she will use the previous setting if she has one, otherwise she will default to 33%.
     It is not necessary to explicitly call setskip on before changing the cutoff point if skipping is turned off.
 
 skip
+    Hybrid mod permission +S.
     Skips the current video and advances to the next video.
 
 steal
+    Hybrid mod permission +O.
     Switches the leader to the mod who called this.
 
 unban name | id
+    Hybrid mod permissions +Q.
     Unbans the specified user. Can also accept the IDs displayed by banlist -v.
+
+--- Hybrid Mod Permissions ---
+A list of all the permissions that can be given to hybrid mods, and the affected commands.
+See the above documentation for any particular details for how the commands are affected.
+Some are unintuitive to prevent being accidentally given out.
+
+A - Addrandom
+B - Bump
+C - Clean
+D - Delete
+E - Setskip
+K - Kick
+L - Lock, Unlock
+M - Mute, Unmute
+N - Removelong
+O - Steal, Mod
+P - Purge
+Q - Ban, Unban, Banlist
+R - Restart
+S - Skip
+T - Duplicates

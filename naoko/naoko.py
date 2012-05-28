@@ -95,6 +95,24 @@ class Naoko(object):
                 'Origin' : 'http://www.synchtube.com',
                 'Referer' : 'http://www.synchtube.com'}
 
+    # Bitmasks for hybrid mods.
+    MASKS = {
+        "LEAD"          : (1, 'O'),         # O - Both the steal and mod command.
+        "BUMP"          : ((1 << 1), 'B'),  # B - Bumping videos.
+        "DELETE"        : ((1 << 2), 'D'),  # D - Deleting videos.
+        "KICK"          : ((1 << 3), 'K'),  # K - Kicking users.
+        "BAN"           : ((1 << 4), 'Q'),  # Q - Banning and unbanning users, as well as viewing the banlist.
+        "RESTART"       : ((1 << 5), 'R'),  # R - Restarting Naoko.
+        "CLEAN"         : ((1 << 6), 'C'),  # C - The clean command.
+        "SKIP"          : ((1 << 7), 'S'),  # S - Skipping videos.
+        "LOCK"          : ((1 << 8), 'L'),  # L - Lock and unlock the playlist.
+        "RANDOM"        : ((1 << 9), 'A'),  # A - Addrandom with more than 5 videos.
+        "LONG"          : ((1 << 10), 'N'), # N - Removelong.
+        "SETSKIP"       : ((1 << 11), 'E'), # E - Setskip.
+        "DUPLICATES"    : ((1 << 12), 'T'), # T - Remove duplicate videos.
+        "MUTE"          : ((1 << 13), 'M'), # M - Mute or unmute Naoko.
+        "PURGE"         : ((1 << 14), 'P')} # P - Purge.
+
     def __init__(self, pipe=None):
         self._getConfig()
         self.thread = threading.currentThread()
@@ -193,6 +211,7 @@ class Naoko(object):
                                               self.config_params)
         self._initHandlers()
         self._initCommandHandlers()
+        self._initHybridMods()
         self.room_info = {}
         self.vidlist = []
         self.thread.close = self.close
@@ -234,13 +253,14 @@ class Naoko(object):
             self.sqlthread = threading.Thread(target=Naoko._sqlloop, args=[self])
             self.sqlthread.start()
 
-        # Start a REPL on port 5001. Only accept connections from localhost
+        # Start a REPL on the specified port. Only accept connections from localhost
         # and expose ourself as 'naoko' in the REPL's local scope
         # WARNING: THE REPL WILL REDIRECT STDOUT AND STDERR.
         # the logger will still go to the the launching terminals
         # stdout/stderr, however print statements will probably be rerouted
         # to the socket.
-        self.repl = Repl(port=5001, host='localhost', locals={"naoko": self})
+        if REPL_PORT > 0:
+            self.repl = Repl(port=REPL_PORT, host='localhost', locals={"naoko": self})
 
         while not self.closing.wait(5):
             # Sleeping first lets everything get initialized
@@ -453,6 +473,33 @@ class Naoko(object):
                 self.api_queue.popleft()()
         self.logger.info("API Loop Closed")
 
+    # Initialize all the stored hybrid mods and their permissions.
+    # In the case of any error, disable hybrid mods until they're later enabled.
+    def _initHybridMods(self):
+        self.logger.debug("Reading hybrid mod list.")
+        f = None
+        try:
+            f = open("hybridmods", "r")
+            line = f.readline()
+            while line and line[0] == '#':
+                line = f.readline()
+            self.hybridModStatus = (line == "ON\n")
+            self.hybridMods = {}
+            line = f.readline()
+            while line:
+                line = line.strip().split(' ', 1)
+                self.hybridMods[line[0]] = int(line[1])
+                line = f.readline()
+        except Exception as e:
+            self.logger.debug("Reading hybrid mod list failed.")
+            self.logger.debug(e)
+            self.hybridModStatus = False
+            self.hybridMods = {}
+        finally:
+            if f:
+                f.close()
+
+
     def _initHandlers(self):
         self.handlers = {"<"                : self.chat,
                          "leader"           : self.leader,
@@ -516,7 +563,9 @@ class Naoko(object):
                                 "removelong"        : self.removeLong,
                                 "eval"              : self.eval,
                                 "setskip"           : self.setSkip,
-                                "help"              : self.help}
+                                "help"              : self.help,
+                                "hybridmods"        : self.hybridmods,
+                                "permissions"       : self.permissions}
 
     def _initIRCCommandHandlers(self):
         self.ircCommandHandlers = {"status"            : self.status,
@@ -942,12 +991,12 @@ class Naoko(object):
     # and data is everything following the command in the chat message
 
     def skip(self, command, user, data):
-        if not user.mod: return
+        if not (user.mod or self.hasPermission(user, "SKIP")): return
         self.asLeader(self.nextVideo, deferred=True)
 
     # Set the skipping mode. Takes either on, off, x, or x%.
     def setSkip(self, command, user, data):
-        if not user.mod: return
+        if not (user.mod or self.hasPermission(user, "SETSKIP")): return
         m = re.match("^((on)|(off)|([1-9][0-9]*)(%)?)( .*)?$", data, re.IGNORECASE)
         if m:
             g = m.groups()
@@ -979,19 +1028,19 @@ class Naoko(object):
         self.enqueueMsg("I refuse; you are beneath me.")
 
     def mute(self, command, user, data):
-        if user.mod:
+        if user.mod or self.hasPermission(user, "MUTE"):
             self.muted = True
 
     def unmute(self, command, user, data):
-        if user.mod:
+        if user.mod or self.hasPermission(user, "MUTE"):
             self.muted = False
 
     def steal(self, command, user, data):
-        if not user.mod: return
+        if not (user.mod or self.hasPermission(user, "LEAD")): return
         self.changeLeader(user.sid)
 
     def makeLeader(self, command, user, data):
-        if not user.mod: return
+        if not (user.mod or self.hasPermission(user, "LEAD")): return
         args = data.split(' ', 1)
         target = self.getUserByNick(args[0])
         self.logger.info("Requested mod change to %s by %s", target, user)
@@ -1026,7 +1075,7 @@ class Naoko(object):
     # Bumps the last video added by the specificied user
     # If no name is provided it bumps the last video by the user who sent the command
     def bump(self, command, user, data):
-        if not user.mod: return
+        if not (user.mod or self.hasPermission(user, "BUMP")): return
         target = data
         if target == "-unnamed":
             target = "" 
@@ -1056,7 +1105,7 @@ class Naoko(object):
 
     # Cleans all the videos above the currently playing video
     def cleanList(self, command, user, data):
-        if not user.mod: return
+        if not (user.mod or self.hasPermission(user, "CLEAN")): return
         videoIndex = self.getVideoIndexById(self.state.current)
         if videoIndex > 0:
             self.logger.debug("Cleaning %d Videos", videoIndex)
@@ -1069,7 +1118,7 @@ class Naoko(object):
 
     # Clears any duplicate videos from the list
     def cleanDuplicates(self, command, user, data):
-        if not user.mod: return
+        if not (user.mod or self.hasPermission(user, "DUPLICATES")): return
         kill = []
         vids = set()
         i = 0
@@ -1089,7 +1138,7 @@ class Naoko(object):
 
     # Adds random videos from the database
     def addRandom(self, command, user, data):
-        if not (user.mod or len(self.vidlist) <= 10): return
+        if not (user.mod or len(self.vidlist) <= 10 or self.hasPermission(user, "RANDOM")): return
         num = None
         try:
             num = int(data)
@@ -1131,7 +1180,7 @@ class Naoko(object):
         target = self.filterString(data, True)[1]
         # Non-mods can only delete their own videos
         # This does prevent unregistered users from deleting their own videos
-        if not user.mod and not target == "": return
+        if not target == "" and not (user.mod or self.hasPermission(user, "DELETE")): return
         if target == "":
             target = user.nick
         if user.mod and data.lower() == "-unnamed":
@@ -1150,7 +1199,7 @@ class Naoko(object):
     
     # Deletes all the videos posted by the specified user
     def purge(self, command, user, data):
-        if not user.mod: return
+        if not (user.mod or self.hasPermission(user, "PURGE")): return
         if data.lower() == "-unnamed":
             target = ''
         else:
@@ -1171,7 +1220,7 @@ class Naoko(object):
     # Removes all videos as long or longer than the provided duration.
     # By default she will not remove videos shorter than 20 minutes.
     def removeLong(self, command, user, data):
-        if not user.mod: return
+        if not (user.mod or self.hasPermission(user, "LONG")): return
         m = re.match("^(([0-9]*):)?([0-9]*)$", data)
         if not m: return
         length = 0
@@ -1195,7 +1244,7 @@ class Naoko(object):
             self.asLeader(removeLong)
 
     def lock(self, command, user, data):
-        if not user.mod: return
+        if not (user.mod or self.hasPermission(user, "LOCK")): return
         if self.room_info["lock?"] == (command == "lock"): return
         def changeLock():
             self.send("lock?", command == "lock")
@@ -1205,15 +1254,65 @@ class Naoko(object):
         msg = "Status = ["
         if not self.muted:
             msg += "Not "
-        msg += "Muted]"
+        msg += "Muted, Hybrid Mods "
+        msg += "Enabled]" if self.hybridModStatus else "Disabled]"
         self.sendChat(msg)
         if self.irc_nick:
             self.ircclient.sendMsg(msg)
 
-    def restart(self, command, user, data):
-        if user.mod:
-            self.close()
+    def hybridmods(self, command, user, data):
+        if not user.mod: return
+        d = data.lower()
+        if d == "on":
+            self.hybridModStatus = True
+        if d == "off":
+            self.hybridModStatus = False
+        if not d:
+            output = []
+            for h, v in self.hybridMods.iteritems():
+                if v:
+                    output.append(h)
+            self.enqueueMsg("Hybrid Mods: %s" % ",".join(output))
+        self._writeHybridMods()
 
+    # Displays and possibly modifies the permissions of a hybrid mod.
+    def permissions(self, command, user, data):
+        if not user.mod: return
+        m = re.match(r"^((\+|\-)((ALL)|(.*)) )?(.*)$", data.upper())
+        if m:
+            g = m.groups()
+            valid, name = self.filterString(g[5], True)
+            name = name.lower()
+            p = 0
+            if name in self.hybridMods:
+                p = self.hybridMods[name]
+            # Change permissions before displaying them.
+            if g[0] and ((not self.hmod_admin) or self.hmod_admin.lower() == user.nick.lower()):
+                if not valid:
+                    self.enqueueMsg("Invalid name, no permissions changed.")
+                    return
+                mask = 0
+                if g[3]:
+                    mask = ~0
+                if g[4]:
+                    for ma, k in self.MASKS.itervalues():
+                        if g[4].find(k) != -1:
+                            mask |= ma
+                if g[1] == '+':
+                    p |= mask
+                else:
+                    p &= ~mask
+                self.hybridMods[name] = p
+                self._writeHybridMods()
+            output = []
+            for ma, k in self.MASKS.itervalues():
+                if p & ma:
+                    output.append(k)
+            self.enqueueMsg("Permissions for %s: %s" % (name, "".join(output)))
+
+    def restart(self, command, user, data):
+        if user.mod or self.hasPermission(user, "RESTART"):
+            self.close()
     def choose(self, command, user, data):
         if not data: return
         choices = data
@@ -1239,10 +1338,11 @@ class Naoko(object):
     # Two special arguments -unnamed and -unregistered.
     # Those commands kick all unnammed and unregistered users. 
     def kick(self, command, user, data):
-        if not user.mod or not data: return
+        if not data or not (user.mod or self.hasPermission(user, "KICK")): return
         args = data.split(' ', 1)
 
         if args[0].lower() == "-unnamed":
+            if not user.mod: return
             kicks = []
             for u in self.userlist:
                 if self.userlist[u].nick == "unnamed":
@@ -1255,6 +1355,7 @@ class Naoko(object):
             return
 
         if args[0].lower() == "-unregistered":
+            if not user.mod: return
             kicks = []
             for u in self.userlist:
                 # Synchtube doesn't properly set user.auth in some cases.
@@ -1281,7 +1382,7 @@ class Naoko(object):
             self.asLeader(kickUser)
 
     def ban(self, command, user, data):
-        if not user.mod or not data: return
+        if not data or not (user.mod or self.hasPermission(user, "BAN")): return
         args = data.split(' ', 1)
         target = self.getUserByNick(args[0])
         if not target or target.mod: return
@@ -1296,14 +1397,14 @@ class Naoko(object):
             self.asLeader(banUser)
 
     def unban(self, command, user, data):
-        if not user.mod: return
+        if not (user.mod or self.hasPermission(user, "BAN")): return
         target = data
         if not target: return
         self.unbanTarget = target
         self.getBanlist(command, user, data)
 
     def getBanlist(self, command, user, data):
-        if not user.mod: return
+        if not (user.mod or self.hasPermission(user, "BAN")): return
         if data.lower() == "-v":
             self.verboseBanlist = True
         def getBans():
@@ -1413,6 +1514,15 @@ class Naoko(object):
         else:
             return True
 
+    # Returns whether a specified user has the permission specified by the mask.
+    def hasPermission(self, user, mask):
+        # If hybrid mods are disabled or the user isn't logged in return False.
+        if not self.hybridModStatus or not user.uid: return False
+        n = user.nick.lower()
+        if n in self.hybridMods and (self.hybridMods[n] & self.MASKS[mask][0]):
+            return True
+        return False
+
     # The following private API methods are fairly low level and work with
     # synchtube sid's (session ids) or raw data arrays. They will usually
     # Fire off a synchtube message without any validation. Higher-level
@@ -1430,6 +1540,24 @@ class Naoko(object):
         userinfo['nickChanges'] = 0
         user = SynchtubeUser(**userinfo)
         self.userlist[user.sid] = user
+
+    # Write the current status of the hybrid mods and a short warning about editing the resulting file.
+    def _writeHybridMods(self):
+        f = None
+        try:
+            f = open("hybridmods", "w")
+            f.write("# This is a file generated by Naoko.\n# Do not edit it manually unless you know what you are doing.\n")
+            f.write("ON\n" if self.hybridModStatus else "OFF\n")
+            for h, v in self.hybridMods.iteritems():
+                if v:
+                    f.write("%s %d\n" % (h, v))              
+        except Exception as e:
+            self.logger.debug("Failed to write hybrid mods to file.")
+            self.logger.debug(e)
+        finally:
+            if f:
+                f.close()
+        
 
     def _shuffle(self, data):
         if self.stthread != threading.currentThread():
@@ -1642,6 +1770,7 @@ class Naoko(object):
         self.room = config.get("naoko", "room")
         self.name = config.get("naoko", "nick")
         self.pw   = config.get("naoko", "pass")
+        self.hmod_admin = config.get("naoko", "hmod_admin").lower()
         self.spam_interval = float(config.get("naoko", "spam_interval"))
         self.server = config.get("naoko", "irc_server")
         self.channel = config.get("naoko", "irc_channel")
