@@ -54,6 +54,10 @@ lastbans
     Displays the last ban for the name of the user who calls this command, including the time of the ban, the reason, and the name of the mod who initiated the ban.
     More options are available to mods. Lastbans will only provide a single ban for non-mods, and will also default to one for mods.
 
+permissions
+    Display the hybrid mod permissions for the user who calls this command.
+    More options are available to mods.
+
 --- Synchtube Mods Only ---
 These commands are only available to Synchtube mods in Synchtube chat. Some commands are available to hybrid mods with specific permissions.
 There are no differences between mods and hybrid mods, save only that hybrid mods are not protected from some commands such as ban like real mods are and the kick command.
@@ -62,6 +66,16 @@ addrandom X
     Hybrid mod permission +A.
     Adds X random videos to the list, where X defaults to five. The maximum value of X for mods is 20. Mods can call this regardless of the length of the playlist.
     The five second limit for successive calls still applies to mods.
+
+autolead on | off
+    Hybrid more permission +U.
+    Sets whether Naoko will automatically take leader when she reconnects. She will (currently) not automatically take leader when there is no playlist.
+
+autosetskip on | off | none | number | percentage
+    Hybrid mod permission +V.
+    Changes the default skip settings that will be set whenever Naoko reconnects. This will override any current settings in the room even if she is only restarted
+    with the restart command.
+    See setskip for an explanation of the possible parameters. If none is sent autosetskip will be disabled.
 
 ban name [reason]
     Hybrid Mod permission +Q.
@@ -152,7 +166,7 @@ steal
     Switches the leader to the mod who called this.
 
 unban name | id
-    Hybrid mod permissions +Q.
+    Hybrid mod permission +Q.
     Unbans the specified user. Can also accept the IDs displayed by banlist -v.
 
 --- Hybrid Mod Permissions ---
@@ -175,3 +189,5 @@ Q - Ban, Unban, Banlist
 R - Restart
 S - Skip
 T - Duplicates
+U - Autolead
+V - Autosetskip

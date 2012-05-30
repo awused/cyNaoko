@@ -111,7 +111,9 @@ class Naoko(object):
         "SETSKIP"       : ((1 << 11), 'E'), # E - Setskip.
         "DUPLICATES"    : ((1 << 12), 'T'), # T - Remove duplicate videos.
         "MUTE"          : ((1 << 13), 'M'), # M - Mute or unmute Naoko.
-        "PURGE"         : ((1 << 14), 'P')} # P - Purge.
+        "PURGE"         : ((1 << 14), 'P'), # P - Purge.
+        "AUTOLEAD"      : ((1 << 15), 'U'), # U - Autolead.
+        "AUTOSKIP"      : ((1 << 16), 'V')} # V - Autosetskip.
 
     def __init__(self, pipe=None):
         self._getConfig()
@@ -148,6 +150,8 @@ class Naoko(object):
         self.state.pauseTime = -1.0
         self.state.dur = 0
         self.state.reason = None
+
+        self._initPersistentSettings()
 
         if self.pw:
             self.logger.info("Attempting to login")
@@ -211,7 +215,6 @@ class Naoko(object):
                                               self.config_params)
         self._initHandlers()
         self._initCommandHandlers()
-        self._initHybridMods()
         self.room_info = {}
         self.vidlist = []
         self.thread.close = self.close
@@ -473,28 +476,36 @@ class Naoko(object):
                 self.api_queue.popleft()()
         self.logger.info("API Loop Closed")
 
-    # Initialize all the stored hybrid mods and their permissions.
-    # In the case of any error, disable hybrid mods until they're later enabled.
-    def _initHybridMods(self):
-        self.logger.debug("Reading hybrid mod list.")
+    # Initialize stored settings that can be changed within Synchtube.
+    # In the case of any error, default to everything being disabled.
+    def _initPersistentSettings(self):
+        self.logger.debug("Reading persistent settings.")
         f = None
         try:
-            f = open("hybridmods", "r")
+            f = open("persistentsettings", "rb")
             line = f.readline()
             while line and line[0] == '#':
                 line = f.readline()
+            self.autoLead = (line == "ON\n")
+            line = f.readline()
+            
+            self.autoSkip = line[:-1]
+            line = f.readline()
+            
             self.hybridModStatus = (line == "ON\n")
-            self.hybridMods = {}
+            self.hybridModList = {}
             line = f.readline()
             while line:
                 line = line.strip().split(' ', 1)
-                self.hybridMods[line[0]] = int(line[1])
+                self.hybridModList[line[0]] = int(line[1])
                 line = f.readline()
         except Exception as e:
-            self.logger.debug("Reading hybrid mod list failed.")
+            self.logger.debug("Reading persistent settings failed.")
             self.logger.debug(e)
+            self.autoLead = False
+            self.autoSkip = "none"
             self.hybridModStatus = False
-            self.hybridMods = {}
+            self.hybridModList = {}
         finally:
             if f:
                 f.close()
@@ -525,7 +536,7 @@ class Naoko(object):
                          "s"                : self.changeState,
                          "playlist"         : self.playlist,
                          "shuffle"          : self.shuffle,
-                         "initdone"         : self.storeUserCount,
+                         "initdone"         : self.initDone,
                          "clear"            : self.clear,
                          "banlist"          : self.banlist}
 
@@ -564,8 +575,10 @@ class Naoko(object):
                                 "eval"              : self.eval,
                                 "setskip"           : self.setSkip,
                                 "help"              : self.help,
-                                "hybridmods"        : self.hybridmods,
-                                "permissions"       : self.permissions}
+                                "hybridmods"        : self.hybridMods,
+                                "permissions"       : self.permissions,
+                                "autolead"          : self.autoLeader,
+                                "autosetskip"       : self.autoSetSkip}
 
     def _initIRCCommandHandlers(self):
         self.ircCommandHandlers = {"status"            : self.status,
@@ -975,6 +988,17 @@ class Naoko(object):
             self.leading.clear()
         self.logger.debug("Leader is %s", self.userlist[data])
 
+    # Automatically set the skip mode and take leader if applicable.
+    # Setskip("none") will simply fail silently, so it is safe to call.
+    def initDone(self, tag, data):
+        self.storeUserCount()
+        if self.autoLead and self.vidlist:
+            def setskip():
+                self.setSkip("", self.getUserByNick(self.name), self.autoSkip)
+            self.asLeader(setskip, False)
+        else:
+            self.setSkip("", self.getUserByNick(self.name), self.autoSkip)
+
     def storeUserCount(self, tag=None, data=None):
         count = len(self.userlist)
         storeTime = int(time.time() * 1000)
@@ -1023,6 +1047,28 @@ class Naoko(object):
                     self.send("skip?", True)
                     self.send("vote_settings", settings)
                 self.asLeader(skipset)
+
+    def autoSetSkip(self, command, user, data):
+        if not (user.mod or self.hasPermissions(user, "AUTOSKIP")): return
+        m = re.match("^((none)|(on)|(off)|([1-9][0-9]*)(%)?)( .*)?$", data, re.IGNORECASE)
+        if m:
+            self.autoSkip = m.groups()[0].lower()
+            self.enqueueMsg("Automatic skip mode set to: %s" % (self.autoSkip))
+            self._writePersistentSettings()
+        else:
+            self.enqueueMsg("Invalid skip setting.")
+
+    def autoLeader(self, command, user, data):
+        if not (user.mod or self.hasPermissions(user, "AUTOLEAD")): return
+        d = data.lower()
+        if d == "on":
+            self.autoLead = True
+            self.enqueueMsg("Automatic leading is enabled.")
+            self._writePersistentSettings()
+        if d == "off":
+            self.autoLead = False
+            self.enqueueMsg("Automatic leading is disabled.")
+            self._writePersistentSettings()
 
     def help(self, command, user, data):
         self.enqueueMsg("I refuse; you are beneath me.")
@@ -1255,42 +1301,57 @@ class Naoko(object):
         if not self.muted:
             msg += "Not "
         msg += "Muted, Hybrid Mods "
-        msg += "Enabled]" if self.hybridModStatus else "Disabled]"
+        msg += "Enabled" if self.hybridModStatus else "Disabled"
+        msg += ", Automatic Leading "
+        msg += "Enabled" if self.autoLead else "Disabled"
+        msg += ", Automatic Skip Mode: %s]" % (self.autoSkip)
         self.sendChat(msg)
         if self.irc_nick:
             self.ircclient.sendMsg(msg)
 
-    def hybridmods(self, command, user, data):
+    def hybridMods(self, command, user, data):
         if not user.mod: return
         d = data.lower()
         if d == "on":
             self.hybridModStatus = True
+            self.enqueueMsg("Hybrid mods enabled.")
+            self._writePersistentSettings()
         if d == "off":
             self.hybridModStatus = False
+            self.enqueueMsg("Hybrid mods disabled.")
+            self._writePersistentSettings()
         if not d:
             output = []
-            for h, v in self.hybridMods.iteritems():
+            for h, v in self.hybridModList.iteritems():
                 if v:
                     output.append(h)
             self.enqueueMsg("Hybrid Mods: %s" % ",".join(output))
-        self._writeHybridMods()
 
     # Displays and possibly modifies the permissions of a hybrid mod.
     def permissions(self, command, user, data):
-        if not user.mod: return
         m = re.match(r"^((\+|\-)((ALL)|(.*)) )?(.*)$", data.upper())
         if m:
             g = m.groups()
-            valid, name = self.filterString(g[5], True)
+            if g[5]:
+                if not user.mod: return
+                valid, name = self.filterString(g[5], True)
+                if not valid:
+                    self.enqueueMsg("Invalid name.")
+                    return
+            else:
+                if g[0]:
+                    self.enqueueMsg("No name given.")
+                    return
+                # Default to displaying the permissions for the current user.
+                name = user.nick
             name = name.lower()
             p = 0
-            if name in self.hybridMods:
-                p = self.hybridMods[name]
+            if name in self.hybridModList:
+                p = self.hybridModList[name]
             # Change permissions before displaying them.
-            if g[0] and ((not self.hmod_admin) or self.hmod_admin.lower() == user.nick.lower()):
-                if not valid:
-                    self.enqueueMsg("Invalid name, no permissions changed.")
-                    return
+            # Only change permissions if the calling user is a mod, a valid name was given, and flags were specified.
+            # Also check whether a hybrid mod administrator is set.
+            if user.mod and g[0] and g[5] and ((not self.hmod_admin) or self.hmod_admin.lower() == user.nick.lower()):
                 mask = 0
                 if g[3]:
                     mask = ~0
@@ -1302,8 +1363,9 @@ class Naoko(object):
                     p |= mask
                 else:
                     p &= ~mask
-                self.hybridMods[name] = p
-                self._writeHybridMods()
+                self.hybridModList[name] = p
+                self._writePersistentSettings()
+
             output = []
             for ma, k in self.MASKS.itervalues():
                 if p & ma:
@@ -1519,7 +1581,7 @@ class Naoko(object):
         # If hybrid mods are disabled or the user isn't logged in return False.
         if not self.hybridModStatus or not user.uid: return False
         n = user.nick.lower()
-        if n in self.hybridMods and (self.hybridMods[n] & self.MASKS[mask][0]):
+        if n in self.hybridModList and (self.hybridModList[n] & self.MASKS[mask][0]):
             return True
         return False
 
@@ -1542,13 +1604,16 @@ class Naoko(object):
         self.userlist[user.sid] = user
 
     # Write the current status of the hybrid mods and a short warning about editing the resulting file.
-    def _writeHybridMods(self):
+    def _writePersistentSettings(self):
         f = None
+        self.logger.debug("Writing persistent settings to file.")
         try:
-            f = open("hybridmods", "w")
+            f = open("persistentsettings", "wb")
             f.write("# This is a file generated by Naoko.\n# Do not edit it manually unless you know what you are doing.\n")
+            f.write("ON\n" if self.autoLead else "OFF\n")
+            f.write("%s\n" % (self.autoSkip))
             f.write("ON\n" if self.hybridModStatus else "OFF\n")
-            for h, v in self.hybridMods.iteritems():
+            for h, v in self.hybridModList.iteritems():
                 if v:
                     f.write("%s %d\n" % (h, v))              
         except Exception as e:
@@ -1557,7 +1622,6 @@ class Naoko(object):
         finally:
             if f:
                 f.close()
-        
 
     def _shuffle(self, data):
         if self.stthread != threading.currentThread():
