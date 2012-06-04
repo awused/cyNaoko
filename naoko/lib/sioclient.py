@@ -66,9 +66,10 @@ class WebSocket(object):
                         'Sec-WebSocket-Key2' : key2}
         return self.headers
 
-    def send(self, data):
+    def send(self, data, log=True):
         frame = '\x00' + data + '\xff'
-        self.pkt_logger.debug("Sending frame: %r", frame)
+        if log:
+            self.pkt_logger.debug("Sending frame: %r", frame)
         self.sock.sendall(frame)
 
     def createSecretKey(self):
@@ -240,11 +241,10 @@ class SocketIOClient(object):
             self.logger.info("Heartbeats Stopped")
         self.ws.close()
 
-
-    def send(self, msg_type=3, sock_id='', end_pt='', data=''):
+    def send(self, msg_type=3, sock_id='', end_pt='', data='', log=True):
         buf = "%s:%s:%s:%s" % (msg_type, sock_id, end_pt, data)
         #self.pkt_logger.debug("Sending %s", buf)
-        self.ws.send(buf)
+        self.ws.send(buf, log)
 
     def sendHeartBeat(self, next_sec=None):
         if next_sec:
@@ -256,8 +256,8 @@ class SocketIOClient(object):
         #self.pkt_logger.debug("Time since last heartbeat %.3f", hb_diff)
         if hb_diff > TIMEOUT:
             raise Exception("Socket.IO Timeout, %.3f since last heartbeat" % (hb_diff))
-        self.send(2)
-        self.send(3, data='{}')
+        self.send(2, log=False)
+        self.send(3, data='{}', log=False)
 
     def connect(self):
         sid =  self.__getSessionInfo()

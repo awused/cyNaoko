@@ -39,6 +39,13 @@ except ImportError:
     class CleverbotClient(object):
         pass
 
+# Package arguments for later use.
+# Due to the way python handles scopes this needs to be used to avoid race conditions.
+def package(fn, *args, **kwargs):
+    def action():
+        fn(*args, **kwargs)
+    return action
+
 eight_choices = [
     "It is certain",
     "It is decidedly so",
@@ -125,6 +132,8 @@ class Naoko(object):
         self.thread.st = self
         self.leader_queue = deque()
         self.st_queue = deque()
+        self.stAction = threading.Event()
+        self.st_action_queue = deque()
         self.logger = logging.getLogger("stclient")
         self.logger.setLevel(LOG_LEVEL)
         self.chat_logger = logging.getLogger("stclient.chat")
@@ -213,6 +222,7 @@ class Naoko(object):
         self.logger.info("Starting SocketIO Client")
         self.client = SocketIOClient(self._ST_IP, self.port, "socket.io",
                                               self.config_params)
+
         self._initHandlers()
         self._initCommandHandlers()
         self.room_info = {}
@@ -234,12 +244,16 @@ class Naoko(object):
 
         self.apiclient = APIClient(self.apikeys)
         self.cbclient = CleverbotClient()
+        self.client.connect()
 
         self.chatthread = threading.Thread(target=Naoko._chatloop, args=[self])
         self.chatthread.start()
 
         self.stthread = threading.Thread(target=Naoko._stloop, args=[self])
         self.stthread.start()
+
+        self.stlistenthread = threading.Thread(target=Naoko._stlistenloop, args=[self])
+        self.stlistenthread.start()
 
         self.playthread = threading.Thread(target=Naoko._playloop, args=[self])
         self.playthread.start()
@@ -269,7 +283,7 @@ class Naoko(object):
             # Sleeping first lets everything get initialized
             # The parent process will wait
             try:
-                status = self.stthread.isAlive()
+                status = self.stthread.isAlive() and self.stlistenthread.isAlive()
                 status = status and (not self.irc_nick or self.ircthread.isAlive())
                 status = status and self.chatthread.isAlive()
                 # Catch the case where the client is still connecting after 5 seconds
@@ -289,10 +303,9 @@ class Naoko(object):
                 self.logger.warn("Restarting")
                 pipe.send("RESTART")
 
-    # Responsible for listening to ST chat and responding with appropriate actions
-    def _stloop(self):
+    # Responsible for listening to communication from Synchtube
+    def  _stlistenloop(self):
         client = self.client
-        client.connect()
         while not self.closing.isSet():
             data = client.recvMessage()
             try:
@@ -313,7 +326,19 @@ class Naoko(object):
             except KeyError:
                 self.logger.warn("No handler for %s [%s]", st_type, arg)
             else:
-                fn(st_type, arg)
+                self.st_action_queue.append(package(fn, st_type, arg))
+                self.stAction.set()
+        else:
+            self.logger.info("Synchtube Listening Loop Closed")
+            self.close()
+
+    # Responsible for handling messages from Synchtube
+    def _stloop(self):
+        client = self.client
+        while not self.closing.isSet() and self.stAction.wait():
+            self.stAction.clear()
+            while self.st_action_queue:
+                self.st_action_queue.popleft()()
         else:
             self.logger.info("Synchtube Loop Closed")
             self.close()
@@ -510,7 +535,6 @@ class Naoko(object):
             if f:
                 f.close()
 
-
     def _initHandlers(self):
         self.handlers = {"<"                : self.chat,
                          "leader"           : self.leader,
@@ -619,6 +643,10 @@ class Naoko(object):
         else:
             fn(command, user, arg)
 
+    # Executes a function in the main Synchtube thread
+    def stExecute(self, action):
+        self.st_action_queue.append(action)
+        self.stAction.set()
 
     def nextVideo(self):
         self.vidLock.acquire()
@@ -662,6 +690,7 @@ class Naoko(object):
         self.playerAction.set()
         self.apiAction.set()
         self.sqlAction.set()
+        self.stAction.set()
         if self.irc_nick:
             self.ircclient.close()
 
@@ -672,9 +701,7 @@ class Naoko(object):
         user = self.userlist[sid]
         self.logger.info("Attempted ban of %s for invalid characters in name", user.nick)
         reason = "Name [%s] contains illegal characters" % user.nick
-        def banUser():
-            self._banUser(sid, reason)
-        self.asLeader(banUser)
+        self.asLeader(package(self._banUser, sid, reason))
     
     def sendChat(self, msg):
         self.logger.debug(repr(msg))
@@ -696,11 +723,9 @@ class Naoko(object):
         self.leader_queue.append(action)
         if self.leader_sid and self.leader_sid != self.sid and giveBack and not self.pendingToss:
             oldLeader = self.leader_sid
-            def tossLeader():
-                self._tossLeader(oldLeader)
             self.pendingToss = True
             self.deferredToss = deferred
-            self.tossLeader = tossLeader
+            self.tossLeader = package(self._tossLeader, oldLeader)
         if self.room_info["tv?"] and giveBack and not self.pendingToss:
             def turnOnTV():
                 self.send("turnon_tv")
@@ -714,10 +739,8 @@ class Naoko(object):
         if sid == self.sid:
             self.takeLeader()
             return
-        def tossLeader():
-            self._tossLeader(sid)
         self.pendingToss = True
-        self.tossLeader = tossLeader
+        self.tossLeader = package(self._tossLeader, sid)
         self.takeLeader()
 
     # Checks the currently playing video against a provided API
@@ -726,9 +749,7 @@ class Naoko(object):
             self.invalidVideo("Invalid video ID.")
             return
          
-        def check():
-            self.invalidVideo(self._checkVideo(vidinfo))
-        self.api_queue.append(check)
+        self.api_queue.append(package(self._checkVideo, vidinfo))
         self.apiAction.set()
 
     # Skips the current invalid video if she is leading.
@@ -756,13 +777,9 @@ class Naoko(object):
             reason = "[%d times] %s" % (self.banTracker[user.nick], reason)
             if self.banTracker[user.nick] >= 3:
                 self.banTracker.pop(user.nick)
-                def banUser():
-                    self._banUser(user.sid, reason)
-                self.asLeader(banUser)
+                self.asLeader(package(self._banUser, user.sid, reason))
             else:
-                def kickUser():
-                    self._kickUser(user.sid, reason)
-                self.asLeader(kickUser)
+                self.asLeader(package(self._kickUser, user.sid, reason))
 
     # Handlers for Synchtube message types
     # All of them receive input in the form (tag, data)
@@ -872,9 +889,7 @@ class Naoko(object):
                 self.pending[sid] = True
                 self.logger.info("Attempted ban of %s for %d nick changes", (user.nick, user.nickChanges))
                 reason = "%s changed names %d times" % (user.nick, user.nickChanges)
-                def banUser():
-                    self._banUser(sid, reason)
-                self.asLeader(banUser)
+                self.asLeader(package(self._banUser, sid, reason))
         else:
             self.userlist[sid] = user._replace(nickChanges=user.nickChanges+1)
 
@@ -1001,14 +1016,12 @@ class Naoko(object):
 
     def storeUserCount(self, tag=None, data=None):
         count = len(self.userlist)
-        storeTime = int(time.time() * 1000)
-        def store():
-            if time.time() - self.userCountTime > USER_COUNT_THROTTLE:
-                self.userCountTime = time.time()
-                self._sqlInsertUserCount(storeTime, count)
-        self.sql_queue.append(store)
-        self.sqlAction.set()
-
+        storeTime = time.time()
+        if storeTime - self.userCountTime > USER_COUNT_THROTTLE:
+            self.userCountTime = storeTime
+            self.sql_queue.append(package(self._sqlInsertUserCount, count, int(storeTime * 1000)))
+            self.sqlAction.set()
+    
     # Command handlers for commands that users can type in Synchtube chat
     # All of them receive input in the form (command, user, data)
     # Where command is the typed command, user is the user who sent the message
@@ -1024,29 +1037,27 @@ class Naoko(object):
         m = re.match("^((on)|(off)|([1-9][0-9]*)(%)?)( .*)?$", data, re.IGNORECASE)
         if m:
             g = m.groups()
+            if g[2]:
+                if self.room_info["skip?"]:
+                    self.asLeader(package(self.send, "skip?", False))
+            
+            settings = None
             if g[1]:
                 if not self.room_info["skip?"]:
-                    settings = None
                     if "vote_settings" in self.room_info:
                         settings = self.room_info["vote_settings"]
                     else:
                         # If there is no known previous setting, default to 33%.
                         settings = {"settings" : "percent", "num" : 33}
-                    def skipset():
-                        self.send("skip?", True)
-                        self.send("vote_settings", settings)
-                    self.asLeader(skipset)
-            if g[2]:
-                if self.room_info["skip?"]:
-                    def skipset():
-                        self.send("skip?", False)
-                    self.asLeader(skipset)
             if g[3]:
                 settings = {"num" : int(g[3]), "settings" : ("percent" if g[4] else "thres")}
-                def skipset():
-                    self.send("skip?", True)
-                    self.send("vote_settings", settings)
-                self.asLeader(skipset)
+            
+            if settings:
+                self.asLeader(package(self._setSkip, settings.copy()))
+
+    def _setSkip(self, settings):
+        self.send("skip?", True)
+        self.send("vote_settings", settings)
 
     def autoSetSkip(self, command, user, data):
         if not (user.mod or self.hasPermissions(user, "AUTOSKIP")): return
@@ -1071,7 +1082,8 @@ class Naoko(object):
             self._writePersistentSettings()
 
     def help(self, command, user, data):
-        self.enqueueMsg("I refuse; you are beneath me.")
+        self.enqueueMsg("I only do this out of pity. https://github.com/Suwako/Naoko/blob/master/commands.txt")
+        #self.enqueueMsg("I refuse; you are beneath me.")
 
     def mute(self, command, user, data):
         if user.mod or self.hasPermission(user, "MUTE"):
@@ -1144,10 +1156,11 @@ class Naoko(object):
             output["id"] = self.vidlist[i].v_sid
             if videoIndex >= 0:
                 output["after"] = self.vidlist[videoIndex].v_sid
-            def move():
-               self.send("mm", output)
-               self.moveMedia("mm", output)
-            self.asLeader(move)
+            self.asLeader(package(self._bump, output.copy()))
+    
+    def _bump(self, output):
+        self.send("mm", output)
+        self.moveMedia("mm", output)
 
     # Cleans all the videos above the currently playing video
     def cleanList(self, command, user, data):
@@ -1155,12 +1168,13 @@ class Naoko(object):
         videoIndex = self.getVideoIndexById(self.state.current)
         if videoIndex > 0:
             self.logger.debug("Cleaning %d Videos", videoIndex)
-            def clean():
-                i = 0
-                while i < videoIndex:
-                   self.send("rm", self.vidlist[i].v_sid)
-                   i+=1
-            self.asLeader(clean)
+            self.asLeader(package(self._cleanList, videoIndex))
+
+    def _cleanList(self, videoIndex):
+        i = 0
+        while i < videoIndex:
+            self.send("rm", self.vidlist[i].v_sid)
+            i+=1
 
     # Clears any duplicate videos from the list
     def cleanDuplicates(self, command, user, data):
@@ -1177,10 +1191,51 @@ class Naoko(object):
                 vids.add(key)
             i += 1
         if kill:
-            def clean():
-                for x in kill:
-                    self.send("rm", x)
-            self.asLeader(clean)
+            self.asLeader(package(self._cleanPlaylist, list(kill)))
+    
+    # Deletes all the videos posted by the specified user
+    def purge(self, command, user, data):
+        if not (user.mod or self.hasPermission(user, "PURGE")): return
+        if data.lower() == "-unnamed":
+            target = ''
+        else:
+            target = self.filterString(data, True)[1].lower()
+            # Don't default to purging unregistered users, and do not purge mods.
+            if not target or target in self.modList:
+                return
+        kill = []
+        for v in self.vidlist:
+            if v.nick.lower() == target and not v.v_sid == self.state.current:
+                kill.append(v.v_sid)
+        if kill:
+            self.asLeader(package(self._cleanPlaylist, list(kill)))
+
+    # Removes all videos as long or longer than the provided duration.
+    # By default she will not remove videos shorter than 20 minutes.
+    def removeLong(self, command, user, data):
+        if not (user.mod or self.hasPermission(user, "LONG")): return
+        m = re.match("^(([0-9]*):)?([0-9]*)$", data)
+        if not m: return
+        length = 0
+        g = m.groups()
+        if g[1]:
+            length = int(g[1]) * 60
+        if g[2]:
+            length += int(g[2])
+        
+        if length < 20:
+            return
+        length *= 60
+        kill = []
+        for v in self.vidlist:
+            if v.vidinfo.dur >= length and not v.v_sid == self.state.current:
+                kill.append(v.v_sid)
+        if kill:
+            self.asLeader(package(self._cleanPlaylist, list(kill)))
+    
+    def _cleanPlaylist(self, kill):
+        for x in kill:
+            self.send("rm", x)
 
     # Adds random videos from the database
     def addRandom(self, command, user, data):
@@ -1194,9 +1249,7 @@ class Naoko(object):
         if num is None:
             num = 5
         if num > 20 or (not user.mod and num > 5): return
-        def add():
-            self._addRandom(num)
-        self.sql_queue.append(add)
+        self.sql_queue.append(package(self._addRandom, num))
         self.sqlAction.set()
     
     # Retrieve the latest bans for the specified user
@@ -1212,9 +1265,7 @@ class Naoko(object):
                 except (TypeError, ValueError) as e:
                     self.logger.debug(e)
         if num > 5 or num < 1: return
-        def fetchBans():
-            self._lastBans(target, num)
-        self.sql_queue.append(fetchBans)
+        self.sql_queue.append(package(self._lastBans, target, num))
         self.sqlAction.set()
 
     # Deletes the last video added by the provided user
@@ -1239,62 +1290,12 @@ class Naoko(object):
                 break
             i -= 1
         if i == videoIndex: return
-        def clean():
-            self.send("rm", self.vidlist[i].v_sid)
-        self.asLeader(clean)
-    
-    # Deletes all the videos posted by the specified user
-    def purge(self, command, user, data):
-        if not (user.mod or self.hasPermission(user, "PURGE")): return
-        if data.lower() == "-unnamed":
-            target = ''
-        else:
-            target = self.filterString(data, True)[1].lower()
-            # Don't default to purging unregistered users, and do not purge mods.
-            if not target or target in self.modList:
-                return
-        kill = []
-        for v in self.vidlist:
-            if v.nick.lower() == target and not v.v_sid == self.state.current:
-                kill.append(v.v_sid)
-        if kill:
-            def purge():
-                for x in kill:
-                    self.send("rm", x)
-            self.asLeader(purge)
-
-    # Removes all videos as long or longer than the provided duration.
-    # By default she will not remove videos shorter than 20 minutes.
-    def removeLong(self, command, user, data):
-        if not (user.mod or self.hasPermission(user, "LONG")): return
-        m = re.match("^(([0-9]*):)?([0-9]*)$", data)
-        if not m: return
-        length = 0
-        g = m.groups()
-        if g[1]:
-            length = int(g[1]) * 60
-        if g[2]:
-            length += int(g[2])
-        
-        if length < 20:
-            return
-        length *= 60
-        kill = []
-        for v in self.vidlist:
-            if v.vidinfo.dur >= length and not v.v_sid == self.state.current:
-                kill.append(v.v_sid)
-        if kill:
-            def removeLong():
-                for x in kill:
-                    self.send("rm", x)
-            self.asLeader(removeLong)
+        self.asLeader(package(self.send, "rm", self.vidlist[i].v_sid))
 
     def lock(self, command, user, data):
         if not (user.mod or self.hasPermission(user, "LOCK")): return
         if self.room_info["lock?"] == (command == "lock"): return
-        def changeLock():
-            self.send("lock?", command == "lock")
-        self.asLeader(changeLock)
+        self.asLeader(package(self.send, "lock?", command == "lock"))
 
     def status(self, command, user, data):
         msg = "Status = ["
@@ -1375,6 +1376,7 @@ class Naoko(object):
     def restart(self, command, user, data):
         if user.mod or self.hasPermission(user, "RESTART"):
             self.close()
+
     def choose(self, command, user, data):
         if not data: return
         choices = data
@@ -1409,11 +1411,8 @@ class Naoko(object):
             for u in self.userlist:
                 if self.userlist[u].nick == "unnamed":
                     kicks.append(u)
-            def kickUsers():
-                for k in kicks:
-                    self._kickUser(k, sendMessage=False)
             self.logger.info("Kicking %d unnamed users requested by %s", len(kicks), user.nick)
-            self.asLeader(kickUsers)
+            self.asLeader(package(self._kick, kicks))
             return
 
         if args[0].lower() == "-unregistered":
@@ -1424,24 +1423,21 @@ class Naoko(object):
                 # A more reliable method without false positives is user.uid.
                 if self.userlist[u].uid == None:
                     kicks.append(u)
-            def kickUsers():
-                for k in kicks:
-                    self._kickUser(k, sendMessage=False)
             self.logger.info("Kicking %d unregistered users requested by %s", len(kicks), user.nick)
-            self.asLeader(kickUsers)
+            self.asLeader(package(self._kick, kicks))
             return
 
         target = self.getUserByNick(args[0])
         if not target or target.mod: return
         self.logger.info("Kick Target %s Requestor %s", target.nick, user.nick)
         if len(args) > 1:
-            def kickUser():
-                self._kickUser(target.sid, args[1])
-            self.asLeader(kickUser)
+            self.asLeader(package(self._kickUser, target.sid, args[1]))
         else:
-            def kickUser():
-                self._kickUser(target.sid)
-            self.asLeader(kickUser)
+            self.asLeader(package(self._kickUser, target.sid))
+
+    def _kick(self, kicks):
+        for k in kicks:
+            self._kickUser(k, sendMessage=False)
 
     def ban(self, command, user, data):
         if not data or not (user.mod or self.hasPermission(user, "BAN")): return
@@ -1450,13 +1446,9 @@ class Naoko(object):
         if not target or target.mod: return
         self.logger.info("Ban Target %s Requestor %s", target, user)
         if len(args) > 1:
-            def banUser():
-                self._banUser(target.sid, args[1], modName=user.nick)
-            self.asLeader(banUser)
+            self.asLeader(package(self._banUser, target.sid, args[1], modName=user.nick))
         else:
-            def banUser():
-                self._banUser(target.sid, modName=user.nick)
-            self.asLeader(banUser)
+            self.asLeader(package(self._banUser, target.sid, modName=user.nick))
 
     def unban(self, command, user, data):
         if not (user.mod or self.hasPermission(user, "BAN")): return
@@ -1469,19 +1461,18 @@ class Naoko(object):
         if not (user.mod or self.hasPermission(user, "BAN")): return
         if data.lower() == "-v":
             self.verboseBanlist = True
-        def getBans():
-            self.send("banlist")
         # If she is trying to unban a user defer the current ban.
-        self.asLeader(getBans, deferred=bool(self.unbanTarget))
+        self.asLeader(package(self.send, "banlist"), deferred=bool(self.unbanTarget))
 
     def cleverbot(self, command, user, data):
         if not hasattr(self.cbclient, "cleverbot"): return
         text = data
         if text:
-            def clever():
-                self.enqueueMsg(self.cbclient.cleverbot(text))
-            self.api_queue.append(clever)
+            self.api_queue.append(package(self._cleverbot, text))
             self.apiAction.set()
+
+    def _cleverbot(self, text):
+        self.enqueueMsg(self.cbclient.cleverbot(text))
 
     def eval(self, command, user, data):
         self.enqueueMsg("You're not the boss of me.")
@@ -1496,29 +1487,31 @@ class Naoko(object):
         g = m.groups()
         src = g[3] or None
         dst = g[2] or g[4] or "en"
-        def trans():
-            out = self.apiclient.translate(g[5], src, dst)
-            if out:
-                if out != -1:
-                    self.enqueueMsg("[%s] %s" % (dst.lower(), out))
-            else:
-                self.enqueueMsg("Translate query failed.")
-        self.api_queue.append(trans)
+        self.api_queue.append(package(self._translate, g[5], src, dst))
         self.apiAction.set()
 
+    def _translate(self, text, src, dst):
+        out = self.apiclient.translate(text, src, dst)
+        if out:
+            if out != -1:
+                self.enqueueMsg("[%s] %s" % (dst.lower(), out))
+        else:
+            self.enqueueMsg("Translate query failed.")
+    
     # Queries the Wolfram Alpha API with the provided string.
     def wolfram(self, command, user, data):
         query = data
         if not query: return
-        def wolf():
-            out = self.apiclient.wolfram(query)
-            if out:
-                if out != -1:
-                    self.enqueueMsg("[%s] %s" % (query, out))
-            else:
-                self.enqueueMsg("Wolfram Alpha query failed.")
-        self.api_queue.append(wolf)
+        self.api_queue.append(package(self._wolfram, query))
         self.apiAction.set()
+    
+    def _wolfram(self, query):
+        out = self.apiclient.wolfram(query)
+        if out:
+            if out != -1:
+                self.enqueueMsg("[%s] %s" % (query, out))
+        else:
+            self.enqueueMsg("Wolfram Alpha query failed.")
 
     # Two functions that search the lists in an efficient manner
 
@@ -1667,7 +1660,6 @@ class Naoko(object):
     # Will correct invalid durations and titles for Youtube videos.
     # This makes SQL inserts dependent on the external API.
     def _validateVideoSQLInsert(self, v):
-        if str(v.uid) == self.userid: return
         vi = v.vidinfo
         dur = vi.dur
         title = vi.title
@@ -1679,18 +1671,26 @@ class Naoko(object):
                 title, dur, valid = data
             else:
                 # Do not store the video if it is invalid or from an unknown website.
-                valid = False
-        if not valid:
-            # The video is invalid, don't insert it
+                # Trust that it is a video that will play.
+                valid = "Unknown"
+        # -- TODO -- Remove title checking here when Synchtube fixes its massive security hole.
+        if not valid or title != vi.title:
+            # The video is invalid don't insert it.
             self.logger.debug("Invalid video, skipping SQL insert.")
+            # Go even further and remove it from the playlist completely
+            self.enqueueMsg("Invalid video removed.")
+            self.stExecute(package(self.asLeader, package(self.send, "rm", v.v_sid)))
             return
+        if valid == "Unknown": return
+
+        # Don't insert videos added by Naoko.
+        if str(v.uid) == self.userid: return
+
         # The insert the video using the retrieved title and duration.
         # Trust the external APIs over the Synchtube playlist.
-        def insert():
-            self._sqlInsertVideo(v, title, dur)
-        self.sql_queue.append(insert)
+        self.sql_queue.append(package(self._sqlInsertVideo, v, title, dur))
         self.sqlAction.set()
-    
+
     def _sqlInsertVideo(self, v, title, dur):
         vi = v.vidinfo
         self.db_logger.debug("Inserting %s into videos", (vi.site, vi.vid, int(dur * 1000), title))
@@ -1761,9 +1761,7 @@ class Naoko(object):
         self.vidlist.append(vid)
         self.vidLock.release()
         if sql:
-            def check():
-                self._validateVideoSQLInsert(vid)
-            self.api_queue.append(check)
+            self.api_queue.append(package(self._validateVideoSQLInsert, vid))
             self.apiAction.set()
 
     def _removeVideo(self, v):
@@ -1801,9 +1799,7 @@ class Naoko(object):
         if sendMessage:
             self.enqueueMsg("Banned %s: (%s)" % (self.userlist[sid].nick, reason))
         self.send("ban", sid)
-        def insert():
-            self._sqlInsertBan(self.userlist[sid], reason, time.time(), modName)
-        self.sql_queue.append(insert)
+        self.sql_queue.append(package(self._sqlInsertBan, self.userlist[sid], reason, time.time(), modName))
         self.sqlAction.set()
 
     # Perform pending pending leader actions.

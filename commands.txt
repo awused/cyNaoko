@@ -25,6 +25,9 @@ d X Y
 XdY
     Rolls X Y-sided dice.
 
+help
+    Links to this file.
+
 status
     Displays whether Naoko is muted or not. This is displayed even if she is muted.
 
