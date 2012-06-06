@@ -1659,7 +1659,7 @@ class Naoko(object):
     # Validates a video before inserting it into the database.
     # Will correct invalid durations and titles for Youtube videos.
     # This makes SQL inserts dependent on the external API.
-    def _validateVideoSQLInsert(self, v):
+    def _validateAddVideo(self, v):
         vi = v.vidinfo
         dur = vi.dur
         title = vi.title
@@ -1667,12 +1667,15 @@ class Naoko(object):
 
         if valid:
             data = self.apiclient.getVideoInfo(vi.site, vi.vid)
-            if data and data != "Unknown":
-                title, dur, valid = data
-            else:
+            if data == "Unknown":
                 # Do not store the video if it is invalid or from an unknown website.
                 # Trust that it is a video that will play.
                 valid = "Unknown"
+            elif data:
+                title, dur, valid = data
+            else:
+                valid = False
+        
         # -- TODO -- Remove title checking here when Synchtube fixes its massive security hole.
         if not valid or title != vi.title:
             # The video is invalid don't insert it.
@@ -1739,7 +1742,7 @@ class Naoko(object):
             self.send("am", [v[0], v[1], self.filterString(v[2])[1],"http://i.ytimg.com/vi/%s/default.jpg" % (v[1]), v[3]/1000.0])
 
     # Add the video described by v
-    def _addVideo(self, v, sql=True):
+    def _addVideo(self, v, check=True):
         if self.stthread != threading.currentThread():
             raise Exception("_addVideo should not be called outside the Synchtube thread")
         v[0] = v[0][:len(SynchtubeVidInfo._fields)]
@@ -1750,18 +1753,23 @@ class Naoko(object):
             v[0][4] = int(v[0][4])
         except (ValueError, TypeError) as e:
             # Something invalid, set a default duration of one minute.
-            v [0][4] = 60
+            v[0][4] = 60
+        except IndexError as e:
+            # Malformed vidinfo, attempt to handle anyway
+            v[0].append([60] * (len(SynchtubeVidInfo._fields) - len(v[0])))
 
         v[0] = SynchtubeVidInfo(*v[0])
-        v.append(None) # If an unregistered adds a video there is no name included
+        if len(v) < len(SynchtubeVideo._fields):
+            v.append([None] * (len(SynchtubeVideo._fields) - len(v))) # If an unregistered adds a video there is no name included
         v = v[:len(SynchtubeVideo._fields)]
         v[3] = self.filterString(v[3], True)[1]
         vid = SynchtubeVideo(*v)
         self.vidLock.acquire()
         self.vidlist.append(vid)
         self.vidLock.release()
-        if sql:
-            self.api_queue.append(package(self._validateVideoSQLInsert, vid))
+        
+        if check:
+            self.api_queue.append(package(self._validateAddVideo, vid))
             self.apiAction.set()
 
     def _removeVideo(self, v):
