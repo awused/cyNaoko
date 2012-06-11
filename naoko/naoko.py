@@ -803,8 +803,8 @@ class Naoko(object):
         # HOWEVER, this will require a mod to tell her to skip before DEFAULT_WAIT seconds.
         self.state.dur = DEFAULT_WAIT
         v = data[1]
-        v.append(None)
-        v.append(None)
+        if len(v) < len(SynchtubeVideo._fields):
+            v.extend([None] * (len(SynchtubeVideo._fields) - len(v))) # If an unregistered adds a video there is no name included
         v = v[:len(SynchtubeVidInfo._fields)]
         v[2] = self.filterString(v[2])[1]
         vi = SynchtubeVidInfo(*v)
@@ -1756,11 +1756,11 @@ class Naoko(object):
             v[0][4] = 60
         except IndexError as e:
             # Malformed vidinfo, attempt to handle anyway
-            v[0].append([60] * (len(SynchtubeVidInfo._fields) - len(v[0])))
+            v[0].extend([60] * (len(SynchtubeVidInfo._fields) - len(v[0])))
 
         v[0] = SynchtubeVidInfo(*v[0])
         if len(v) < len(SynchtubeVideo._fields):
-            v.append([None] * (len(SynchtubeVideo._fields) - len(v))) # If an unregistered adds a video there is no name included
+            v.extend([None] * (len(SynchtubeVideo._fields) - len(v))) # If an unregistered adds a video there is no name included
         v = v[:len(SynchtubeVideo._fields)]
         v[3] = self.filterString(v[3], True)[1]
         vid = SynchtubeVideo(*v)
