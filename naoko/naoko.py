@@ -803,8 +803,8 @@ class Naoko(object):
         # HOWEVER, this will require a mod to tell her to skip before DEFAULT_WAIT seconds.
         self.state.dur = DEFAULT_WAIT
         v = data[1]
-        if len(v) < len(SynchtubeVideo._fields):
-            v.extend([None] * (len(SynchtubeVideo._fields) - len(v))) # If an unregistered adds a video there is no name included
+        if len(v) < len(SynchtubeVidInfo._fields):
+            v.extend([None] * (len(SynchtubeVidInfo._fields) - len(v))) # If an unregistered adds a video there is no name included
         v = v[:len(SynchtubeVidInfo._fields)]
         v[2] = self.filterString(v[2])[1]
         vi = SynchtubeVidInfo(*v)
