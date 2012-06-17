@@ -169,6 +169,10 @@ setskip on | off | number | percentage
     Sets the status for voting depending on what is provided. If told to turn on skipping, she will use the previous setting if she has one, otherwise she will default to 33%.
     It is not necessary to explicitly call setskip on before changing the cutoff point if skipping is turned off.
 
+shuffle
+    Hyrbid mod permissions +F.
+    Shuffles the list and bumps the currently playing video to the top of the list.
+
 skip
     Hybrid mod permission +S.
     Skips the current video and advances to the next video.
@@ -191,6 +195,7 @@ B - Bump
 C - Clean
 D - Delete
 E - Setskip
+F - Shuffle
 G - Poll, EndPoll
 K - Kick
 L - Lock, Unlock

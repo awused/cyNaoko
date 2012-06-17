@@ -121,7 +121,14 @@ class Naoko(object):
         "PURGE"         : ((1 << 14), 'P'), # P - Purge.
         "AUTOLEAD"      : ((1 << 15), 'U'), # U - Autolead.
         "AUTOSKIP"      : ((1 << 16), 'V'), # V - Autosetskip.
-        "POLL"          : ((1 << 17), 'G')} # V - Start and end polls.
+        "POLL"          : ((1 << 17), 'G'), # G - Start and end polls.
+        "SHUFFLE"       : ((1 << 18), 'F')} # F - Shuffle.
+
+    # Bitmasks for deferred tosses
+    DEFERRED_MASKS = {
+        "SKIP"          : 1,
+        "UNBAN"         : 1 << 1,
+        "SHUFFLE"       : 1 << 2}
 
     def __init__(self, pipe=None):
         self._getConfig()
@@ -144,12 +151,13 @@ class Naoko(object):
         self.pending = {}
         self.leader_sid = None
         self.pendingToss = False
-        self.deferredToss = False
+        self.deferredToss = 0
         self.muted = False
         self.verboseBanlist = False
         self.unbanTarget = None
         self.banTracker = {}
         self.modList = set()
+        self.shuffleBump = False
         self.userCountTime = time.time() - USER_COUNT_THROTTLE
         
         # Keep all the state information together
@@ -605,7 +613,8 @@ class Naoko(object):
                                 "autolead"          : self.autoLeader,
                                 "autosetskip"       : self.autoSetSkip,
                                 "poll"              : self.poll,
-                                "endpoll"           : self.endPoll}
+                                "endpoll"           : self.endPoll,
+                                "shuffle"           : self.shuffleList}
 
     def _initIRCCommandHandlers(self):
         self.ircCommandHandlers = {"status"            : self.status,
@@ -722,18 +731,18 @@ class Naoko(object):
             buf = json.dumps(buf, encoding="iso-8859-15")
         self.client.send(3, data=buf)
 
-    def asLeader(self, action=None, giveBack=True, deferred=False):
+    def asLeader(self, action=None, giveBack=True, deferred=0):
         self.leader_queue.append(action)
         if self.leader_sid and self.leader_sid != self.sid and giveBack and not self.pendingToss:
             oldLeader = self.leader_sid
             self.pendingToss = True
-            self.deferredToss = deferred
+            self.deferredToss |= deferred
             self.tossLeader = package(self._tossLeader, oldLeader)
         if self.room_info["tv?"] and giveBack and not self.pendingToss:
             def turnOnTV():
                 self.send("turnon_tv")
             self.pendingToss = True
-            self.deferredToss = deferred
+            self.deferredToss |= deferred
             self.tossLeader = turnOnTV
         self.takeLeader()
 
@@ -826,6 +835,14 @@ class Naoko(object):
 
     def shuffle(self, tag, data):
         self._shuffle(data)
+        if self.shuffleBump:
+            self._bump({"id" : self.shuffleBump})
+            self.shuffleBump = False
+            if self.deferredToss & self.DEFERRED_MASKS["SHUFFLE"]:
+                self.deferredToss &= ~self.DEFERRED_MASKS["SHUFFLE"]
+                if not self.deferredToss:
+                    self.tossLeader()
+                    self.pendingToss = False
 
     def changeState(self, tag, data):
         self.logger.debug("State is %s %s", tag, data)
@@ -848,14 +865,15 @@ class Naoko(object):
         self.playerAction.set()
 
     def play(self, tag, data):
-        if self.leading.isSet() or self.deferredToss:
+        if self.leading.isSet() or self.deferredToss & self.DEFERRED_MASKS["SKIP"]:
             if len (self.vidlist) > 1 and (not self.state.current == None) and (not self.getVideoIndexById(self.state.current) == None):
                 self.send("rm", self.state.current)
             self.send("s", [1,0])
-            if self.deferredToss:
-                self.tossLeader()
-                self.pendingToss = False
-                self.deferredToss = False
+            if self.deferredToss & self.DEFERRED_MASKS["SKIP"]:
+                self.deferredToss &= ~self.DEFERRED_MASKS["SKIP"]
+                if not self.deferredToss:
+                    self.tossLeader()
+                    self.pendingToss = False
             
         self.state.current = data[1]
         index = self.getVideoIndexById(self.state.current)
@@ -964,10 +982,11 @@ class Naoko(object):
             if target and self.leader_sid == self.sid:
                 self.send("unban", {"id": target})
             self.unbanTarget = None
-            if self.deferredToss:
-                self.tossLeader()
-                self.deferredToss = False
-                self.pendingToss = False
+            if self.deferredToss & self.DEFERRED_MASKS["UNBAN"]:
+                self.deferredToss &= ~self.DEFERRED_MASKS["UNBAN"]
+                if not self.deferredToss:
+                    self.tossLeader()
+                    self.pendingToss = False
 
     def chat(self, tag, data):
         sid = data[0]
@@ -1034,7 +1053,7 @@ class Naoko(object):
 
     def skip(self, command, user, data):
         if not (user.mod or self.hasPermission(user, "SKIP")): return
-        self.asLeader(self.nextVideo, deferred=True)
+        self.asLeader(self.nextVideo, deferred=self.DEFERRED_MASKS["SKIP"])
 
     # Set the skipping mode. Takes either on, off, x, or x%.
     def setSkip(self, command, user, data):
@@ -1085,6 +1104,11 @@ class Naoko(object):
             self.autoLead = False
             self.enqueueMsg("Automatic leading is disabled.")
             self._writePersistentSettings()
+
+    def shuffleList(self, command, user, data):
+        if not (user.mod or self.hasPermissions(user, "SHUFFLE")): return
+        self.shuffleBump = self.state.current
+        self.asLeader(package(self.send, "shuffle"), deferred=self.DEFERRED_MASKS["SHUFFLE"]) 
 
     def help(self, command, user, data):
         self.enqueueMsg("I only do this out of pity. https://github.com/Suwako/Naoko/blob/master/commands.txt")
@@ -1488,7 +1512,7 @@ class Naoko(object):
         if data.lower() == "-v":
             self.verboseBanlist = True
         # If she is trying to unban a user defer the current ban.
-        self.asLeader(package(self.send, "banlist"), deferred=bool(self.unbanTarget))
+        self.asLeader(package(self.send, "banlist"), deferred=(self.DEFERRED_MASKS["UNBAN"] if self.unbanTarget else 0))
 
     def cleverbot(self, command, user, data):
         if not hasattr(self.cbclient, "cleverbot"): return
@@ -1811,13 +1835,15 @@ class Naoko(object):
         if self.stthread != threading.currentThread():
             raise Exception("_moveVideo should not be called outside the Synchtube thread")
         self.vidLock.acquire()
-        video = self.vidlist.pop(self.getVideoIndexById(v))
-        pos = 0
-        if after:
-            pos = self.getVideoIndexById(after) + 1
-        self.vidlist.insert(pos, video)
+        idx = self.getVideoIndexById(v)
+        if idx >= 0:  
+            video = self.vidlist.pop(self.getVideoIndexById(v))
+            pos = 0
+            if after:
+                pos = self.getVideoIndexById(after) + 1
+            self.vidlist.insert(pos, video)
+            self.logger.debug("Inserted %s after %s", video, self.vidlist[pos - 1])
         self.vidLock.release()
-        self.logger.debug("Inserted %s after %s", video, self.vidlist[pos - 1])
 
     # Kick user using their sid(session id)
     def _kickUser(self, sid, reason="Requested", sendMessage=True):
