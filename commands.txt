@@ -63,7 +63,8 @@ permissions
 
 --- Synchtube Mods Only ---
 These commands are only available to Synchtube mods in Synchtube chat. Some commands are available to hybrid mods with specific permissions.
-There are no differences between mods and hybrid mods, save only that hybrid mods are not protected from some commands such as ban like real mods are and the kick command.
+There are no differences between mods and hybrid mods, save only that hybrid mods are not protected from some commands such as ban like real mods are, and they cannot use the
+special parameters for the kick command.
 
 addrandom X
     Hybrid mod permission +A.
@@ -108,6 +109,10 @@ duplicates
     Deletes duplicate videos from the playlist. Will not remove the currently playing video even if it is a duplicate.
     Leaves the first occurence of any duplicated video on the list, even if it is above the currently playing video.
 
+endpoll
+    Hybrid mod permissions +G.
+    Ends the current poll.
+
 hybridmods [on | off]
     Enables or disables hybrid mods if on or off are passed.
     With neither Naoko will list all the current hybridmods with active permissions.
@@ -140,6 +145,10 @@ unmute
 permissions [(+ | -) (all | flags)] name
     Give or remove permissions to the specified hybrid mod. Flags for permissions are defined below.
     If no changes are specified, or if changes do take place, Naoko will display the current permissions of the hybrid mod.
+
+poll title*option*option[*option...]
+    Hybrid mod permission +G.
+    Creates a poll with the given list of asterisk separated options and the given title.
 
 purge name | -unnamed
     Hybrid mod permission +P.
@@ -182,6 +191,7 @@ B - Bump
 C - Clean
 D - Delete
 E - Setskip
+G - Poll, EndPoll
 K - Kick
 L - Lock, Unlock
 M - Mute, Unmute

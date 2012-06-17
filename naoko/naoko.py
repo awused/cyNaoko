@@ -120,7 +120,8 @@ class Naoko(object):
         "MUTE"          : ((1 << 13), 'M'), # M - Mute or unmute Naoko.
         "PURGE"         : ((1 << 14), 'P'), # P - Purge.
         "AUTOLEAD"      : ((1 << 15), 'U'), # U - Autolead.
-        "AUTOSKIP"      : ((1 << 16), 'V')} # V - Autosetskip.
+        "AUTOSKIP"      : ((1 << 16), 'V'), # V - Autosetskip.
+        "POLL"          : ((1 << 17), 'G')} # V - Start and end polls.
 
     def __init__(self, pipe=None):
         self._getConfig()
@@ -602,7 +603,9 @@ class Naoko(object):
                                 "hybridmods"        : self.hybridMods,
                                 "permissions"       : self.permissions,
                                 "autolead"          : self.autoLeader,
-                                "autosetskip"       : self.autoSetSkip}
+                                "autosetskip"       : self.autoSetSkip,
+                                "poll"              : self.poll,
+                                "endpoll"           : self.endPoll}
 
     def _initIRCCommandHandlers(self):
         self.ircCommandHandlers = {"status"            : self.status,
@@ -879,8 +882,10 @@ class Naoko(object):
             return
 
         user = self.userlist[sid]
+        if user.mod or user.sid == self.sid: return
+       
         if user.nickChanges > 5 or (user.nickChanges > 0 and not nick == oldnick):
-            if self.pending.has_key(sid) or user.mod or user.sid == self.sid:
+            if self.pending.has_key(sid):
                 return
             else:
                 # Only a script/bot can change nicks to different nicks multiple times.
@@ -1084,6 +1089,27 @@ class Naoko(object):
     def help(self, command, user, data):
         self.enqueueMsg("I only do this out of pity. https://github.com/Suwako/Naoko/blob/master/commands.txt")
         #self.enqueueMsg("I refuse; you are beneath me.")
+
+    # Creates a poll given an asterisk separated list of strings containing the title and at least two choices.
+    def poll(self, command, user, data):
+        if not (user.mod or self.hasPermission(user, "POLL")): return
+        elements = data.split("*")
+        # Filter out any empty or whitespace strings
+        i = len(elements) - 1
+        while i >= 0:
+            if not elements[i].strip():
+                elements.pop(i)
+            i-=1
+        if len(elements) < 3: return
+        self.asLeader(package(self._poll, list(elements)))
+
+    def _poll(self, elements):
+        self.send("close_poll")
+        self.send("init_poll", [elements[0], elements[1:]])   
+
+    def endPoll(self, command, user, data):
+        if not (user.mod or self.hasPermission(user, "POLL")): return
+        self.asLeader(package(self.send, "close_poll"))
 
     def mute(self, command, user, data):
         if user.mod or self.hasPermission(user, "MUTE"):
