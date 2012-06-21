@@ -114,14 +114,13 @@ class Naoko(object):
         "SKIP"          : ((1 << 7), 'S'),  # S - Skipping videos.
         "LOCK"          : ((1 << 8), 'L'),  # L - Lock and unlock the playlist.
         "RANDOM"        : ((1 << 9), 'A'),  # A - Addrandom with more than 5 videos.
-        "LONG"          : ((1 << 10), 'N'), # N - Removelong.
         "SETSKIP"       : ((1 << 11), 'E'), # E - Setskip.
         "DUPLICATES"    : ((1 << 12), 'T'), # T - Remove duplicate videos.
         "MUTE"          : ((1 << 13), 'M'), # M - Mute or unmute Naoko.
-        "PURGE"         : ((1 << 14), 'P'), # P - Purge.
+        "PURGE"         : ((1 << 14), 'G'), # G - Purge.
         "AUTOLEAD"      : ((1 << 15), 'U'), # U - Autolead.
         "AUTOSKIP"      : ((1 << 16), 'V'), # V - Autosetskip.
-        "POLL"          : ((1 << 17), 'G'), # G - Start and end polls.
+        "POLL"          : ((1 << 17), 'P'), # P - Start and end polls.
         "SHUFFLE"       : ((1 << 18), 'F')} # F - Shuffle.
 
     # Bitmasks for deferred tosses
@@ -604,7 +603,6 @@ class Naoko(object):
                                 "wolfram"           : self.wolfram,
                                 "unban"             : self.unban,
                                 "banlist"           : self.getBanlist,
-                                "removelong"        : self.removeLong,
                                 "eval"              : self.eval,
                                 "setskip"           : self.setSkip,
                                 "help"              : self.help,
@@ -1243,42 +1241,30 @@ class Naoko(object):
         if kill:
             self.asLeader(package(self._cleanPlaylist, list(kill)))
     
-    # Deletes all the videos posted by the specified user
+    # Deletes all the videos posted by the specified user,
+    # with a specific pattern in their title (min 4 characters), or longer than a certain duration (min 20 minutes).
+    # If multiple options are provided it will only remove videos that match all of the criteria.
+    # Combines the previous removelong and purge functions together, with more functionality.
+    # Mods can purge themselves, and Naoko can be purged only by a mod.
     def purge(self, command, user, data):
         if not (user.mod or self.hasPermission(user, "PURGE")): return
-        if data.lower() == "-unnamed":
-            target = ''
-        else:
-            target = self.filterString(data, True)[1].lower()
-            # Don't default to purging unregistered users, and do not purge mods.
-            if not target or target in self.modList:
-                return
-        kill = []
-        for v in self.vidlist:
-            if v.nick.lower() == target and not v.v_sid == self.state.current:
-                kill.append(v.v_sid)
-        if kill:
-            self.asLeader(package(self._cleanPlaylist, list(kill)))
+        p = self._parseDeleteOptions(data)
+        if not p: return
+        name, duration, title = p
+        if name == None and not duration and not title: return 
 
-    # Removes all videos as long or longer than the provided duration.
-    # By default she will not remove videos shorter than 20 minutes.
-    def removeLong(self, command, user, data):
-        if not (user.mod or self.hasPermission(user, "LONG")): return
-        m = re.match("^(([0-9]*):)?([0-9]*)$", data)
-        if not m: return
-        length = 0
-        g = m.groups()
-        if g[1]:
-            length = int(g[1]) * 60
-        if g[2]:
-            length += int(g[2])
-        
-        if length < 20:
+        # Only mods can purge themselves or Naoko.
+        if name and (name in self.modList and not (name == user.nick.lower() or (user.mod and name == self.name.lower()))):
             return
-        length *= 60
+
+        if name == "" and not user.mod: return
+
         kill = []
         for v in self.vidlist:
-            if v.vidinfo.dur >= length and not v.v_sid == self.state.current:
+            # Only purge videos that match all criteria
+            if not v.v_sid == self.state.current and (name == None or v.nick.lower() == name) and (not duration 
+                    or v.vidinfo.dur >= duration) and (not title or v.vidinfo.title.lower().find(title) != -1):
+                
                 kill.append(v.v_sid)
         if kill:
             self.asLeader(package(self._cleanPlaylist, list(kill)))
@@ -1286,6 +1272,82 @@ class Naoko(object):
     def _cleanPlaylist(self, kill):
         for x in kill:
             self.send("rm", x)
+    
+    # Deletes the last video matching the given criteria. Same parameters as purge, but if nothing is given it will default to the last video
+    # posted by the user who calls it.
+    def delete(self, command, user, data):
+        # Due to the way Synchtube handles videos added by unregistered users they are
+        # unable to delete their own videos. This prevents them abusing it to delete
+        # videos added by registered users.
+        if user.uid == None: return
+        p = self._parseDeleteOptions(data)
+        if not p: return
+        name, duration, title = p
+        
+        # Non-mods and non-hybrid mods can only delete their own videos
+        # This does prevent unregistered users from deleting their own videos
+        if (not name == None or (title or duration)) and not (user.mod or self.hasPermission(user, "DELETE")): return
+        if name == None and not duration and not title: 
+            target = user.nick
+        
+        videoIndex = self.getVideoIndexById(self.state.current)
+        i = len(self.vidlist) - 1
+        while i > videoIndex:
+            v = self.vidlist[i]
+            # Delete the last video that matches all criteria
+            if (name == None or v.nick.lower() == name) and (not duration or v.vidinfo.dur >= duration) and (not title or v.vidinfo.title.lower().find(title) != -1):
+                break
+            i -= 1
+        if i == videoIndex: return
+        self.asLeader(package(self.send, "rm", self.vidlist[i].v_sid))
+
+    # Parses the options for deleting and purging videos
+    def _parseDeleteOptions(self, data):
+        text = data.lower().split("\"")
+        
+        params = re.split(" +", text[0])
+        if len(text) == 3:
+            if not text[1] or len(text[1]) < 4: return
+            params.append(-1)
+            params.extend(re.split(" +", text[2]))
+        elif len(text) != 1: return
+        params = deque(params) 
+        
+        name = None
+        duration = None
+        title = None
+        # Could be done with a huge regexp but this is probably cleaner and easier to maintain.
+        while params:
+            t = params.popleft()
+            if not t: continue
+            if t == -1: return
+            if t == "-unnamed":
+                if not name == None: return
+                name = ""
+            elif t == "-title":
+                if title or not params or params.popleft(): return 
+                if not params or not params.popleft() == -1 or len(text) < 3: return
+                title = text[1]
+            elif t == "-dur":
+                if duration or not params: return
+                duration = params.popleft()
+                if not duration or duration == -1: return
+
+                m = re.match("^(([0-9]*):)?([0-9]*)$", duration)
+                if not m: return
+                length = 0
+                g = m.groups()
+                if g[1]:
+                    length = int(g[1]) * 60
+                if g[2]:
+                    length += int(g[2])
+        
+                if length < 20: return
+                duration = length * 60
+            else:
+                if not name == None: return
+                name = self.filterString(t, True)[1]
+        return (name, duration, title)
 
     # Adds random videos from the database
     def addRandom(self, command, user, data):
@@ -1317,30 +1379,6 @@ class Naoko(object):
         if num > 5 or num < 1: return
         self.sql_queue.append(package(self._lastBans, target, num))
         self.sqlAction.set()
-
-    # Deletes the last video added by the provided user
-    def delete(self, command, user, data):
-        # Due to the way Synchtube handles videos added by unregistered users they are
-        # unable to delete their own videos. This prevents them abusing it to delete
-        # videos added by registered users.
-        if user.uid == None: return
-        target = self.filterString(data, True)[1]
-        # Non-mods can only delete their own videos
-        # This does prevent unregistered users from deleting their own videos
-        if not target == "" and not (user.mod or self.hasPermission(user, "DELETE")): return
-        if target == "":
-            target = user.nick
-        if user.mod and data.lower() == "-unnamed":
-            target = ""
-        target = target.lower()
-        videoIndex = self.getVideoIndexById(self.state.current)
-        i = len(self.vidlist) - 1
-        while i > videoIndex:
-            if self.vidlist[i].nick.lower() == target:
-                break
-            i -= 1
-        if i == videoIndex: return
-        self.asLeader(package(self.send, "rm", self.vidlist[i].v_sid))
 
     def lock(self, command, user, data):
         if not (user.mod or self.hasPermission(user, "LOCK")): return
@@ -1573,6 +1611,33 @@ class Naoko(object):
     def getVideoIndexById(self, vid):
         try: return (idx for idx, ele in enumerate(self.vidlist) if ele.v_sid == vid).next()
         except StopIteration: return -1
+    
+    # Returns whether a specified user has the permission specified by the mask.
+    def hasPermission(self, user, mask):
+        # If hybrid mods are disabled or the user isn't logged in return False.
+        if not self.hybridModStatus or not user.uid: return False
+        n = user.nick.lower()
+        if n in self.hybridModList and (self.hybridModList[n] & self.MASKS[mask][0]):
+            return True
+        return False
+    
+    # Returns whether or not a video id could possibly be valid
+    # Guards against possible attacks and annoyances
+    def checkVideoId(self, vi):
+        if not vi.vid: return False
+
+        vid = vi.vid
+        if type(vid) is not str and type(vid) is not unicode:
+            vid = str(vid)
+
+        if vi.site == "yt":
+            return re.match("^[a-zA-Z0-9\-_]+$", vid)
+        elif vi.site == "dm":
+            return re.match("^[a-zA-A0-9]+$", vid)
+        elif vi.site == "vm" or vi.site == "sc":
+            return re.match("^[0-9]+$", vid)
+        else:
+            return True
 
     # Filters a string, removing invalid characters
     # Used to sanitize nicks or video titles for printing
@@ -1595,38 +1660,10 @@ class Naoko(object):
             if isNick and ((o >= 48 and o <= 57) or (o >= 97 and o <= 122) or (o >= 65 and o <= 90)):
                 output.append(c)
                 continue
-            # Synchtube can't handle code points above 0xfff
             valid = o > 31 and o != 127 and not (o >= 0xd800 and o <= 0xdfff) and o <= 0xffff
             if (not isNick) and valid:
                 output.append(c)
         return (len(output) == len(value) and len , "".join(output))
-
-    # Returns whether or not a video id could possibly be valid
-    # Guards against possible attacks and annoyances
-    def checkVideoId(self, vi):
-        if not vi.vid: return False
-
-        vid = vi.vid
-        if type(vid) is not str and type(vid) is not unicode:
-            vid = str(vid)
-
-        if vi.site == "yt":
-            return re.match("^[a-zA-Z0-9\-_]+$", vid)
-        elif vi.site == "dm":
-            return re.match("^[a-zA-A0-9]+$", vid)
-        elif vi.site == "vm" or vi.site == "sc":
-            return re.match("^[0-9]+$", vid)
-        else:
-            return True
-
-    # Returns whether a specified user has the permission specified by the mask.
-    def hasPermission(self, user, mask):
-        # If hybrid mods are disabled or the user isn't logged in return False.
-        if not self.hybridModStatus or not user.uid: return False
-        n = user.nick.lower()
-        if n in self.hybridModList and (self.hybridModList[n] & self.MASKS[mask][0]):
-            return True
-        return False
 
     # The following private API methods are fairly low level and work with
     # synchtube sid's (session ids) or raw data arrays. They will usually

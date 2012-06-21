@@ -100,9 +100,14 @@ clean
     Cleans the playlist by removing all the videos that are above the current video in the playlist.
     Naoko does not check or have any way of telling if those videos have actually been played or not.
 
-delete [name | -unnamed]
+delete [name | -unnamed | -title "X" | -dur (hours: | hours:minutes | :minutes | minutes)]
     Hybrid mod permission +D.
-    In addition to the functionality outlined above, deletes the last video added by the user with the given name, or the last video added by any unregistered user.
+    In addition to the functionality outlined above, deletes the last video after the currently playing video matching a set of filters.
+    Any combination of filters is supported, except combining a name and -unnamed. When combining filters only videos which match all provided filters will be removed.
+    Providing a title, in quotes, of length at least 4 characters will match any video with that substring in the title, ignoring case.
+    Providing a duration of at least 20 minutes will match all videos with a length of at least that duration.
+    Providing a name will match all videos posted by a registered user with that name.
+    Providing -unnamed will match all videos added by unregistered users.
 
 duplicates
     Hybrid mod permission +T.
@@ -147,18 +152,17 @@ permissions [(+ | -) (all | flags)] name
     If no changes are specified, or if changes do take place, Naoko will display the current permissions of the hybrid mod.
 
 poll title*option*option[*option...]
-    Hybrid mod permission +G.
+    Hybrid mod permission +P.
     Creates a poll with the given list of asterisk separated options and the given title.
 
-purge name | -unnamed
-    Hybrid mod permission +P.
-    Deletes all videos, with the possible exception of the currently playing video, added by the specified user from the playlist.
-    If -unnamed is provided it will delete all videos added by unregistered users.
-    Cannot purge a mod who is in the room. 
-
-removelong hours: | hours:minutes | :minutes | minutes
-    Hybrid mod permission +N.
-    Removes all videos that are at least the specified length. Requires that the specified length is equivalent to at least 20 minutes.
+purge name | -unnamed | -title "X" | -dur (hours: | hours:minutes | :minutes | minutes)
+    Hybrid mod permission +G.
+    Removes all videos, except the currently playing video, that match a set of filters.
+    Any combination of filters is supported, except combining a name and -unnamed. When combining filters only videos which match all provided filters will be removed.
+    Providing a title, in quotes, of length at least 4 characters will match any video with that substring in the title, ignoring case.
+    Providing a duration of at least 20 minutes will match all videos with a length of at least that duration.
+    Providing a name will match all videos posted by a registered user with that name.
+    Providing -unnamed will match all videos added by unregistered users.
 
 restart
     Hybrid mod permission +R.
@@ -196,13 +200,13 @@ C - Clean
 D - Delete
 E - Setskip
 F - Shuffle
-G - Poll, EndPoll
+P - Purge
 K - Kick
 L - Lock, Unlock
 M - Mute, Unmute
 N - Removelong
 O - Steal, Mod
-P - Purge
+P - Poll, EndPoll
 Q - Ban, Unban, Banlist
 R - Restart
 S - Skip
