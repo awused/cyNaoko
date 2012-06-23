@@ -181,7 +181,7 @@ class NaokoDB(object):
 
 
     # Higher level video/poll/chat-related APIs
-    def getVideos(self, num=None, columns=None, orderby=None):
+    def getVideos(self, num=None, columns=None, orderby=None, duration_s=None, title=None, user=None):
         """
         Retrieves videos from the video_stats table of Naoko's database.
 
@@ -222,11 +222,24 @@ class NaokoDB(object):
                 sel_col = col_repl[col]
             sel_cols.append(sel_col)
 
+        binds = ()
         sel_list  = ', '.join(sel_cols)
         sel_cls   = 'SELECT %s' % (sel_list)
         from_cls  = ' FROM video_stats vs, videos v '
         where_cls = ' WHERE vs.type = v.type AND vs.id = v.id '
+        
+        if isinstance(duration_s, (int, long)):
+            where_cls += " AND v.duration_ms <= ? "
+            binds += (duration_s*1000,)
 
+        if isinstance(title, (str, unicode)):
+            where_cls += " AND v.title like ? COLLATE NOCASE "
+            binds += ("%%%s%%" % (title),)
+
+        if isinstance(user, (str, unicode)):
+            where_cls += " AND vs.uname like ? COLLATE NOCASE "
+            binds += (user,)
+        
         sql = sel_cls + from_cls + where_cls
 
         def matchOrderBy(this, other):
@@ -254,7 +267,6 @@ class NaokoDB(object):
         else:
             raise ProgrammingError("Invalid orderby %s" % (orderby))
 
-        binds = ()
         if isinstance(num, (int, long)):
             sql += ' LIMIT ?'
             binds += (num,)

@@ -1248,10 +1248,11 @@ class Naoko(object):
     # Mods can purge themselves, and Naoko can be purged only by a mod.
     def purge(self, command, user, data):
         if not (user.mod or self.hasPermission(user, "PURGE")): return
-        p = self._parseDeleteOptions(data)
+        p = self.parseParameters(data, 0b10111)
         if not p: return
-        name, duration, title = p
-        if name == None and not duration and not title: return 
+        name, duration, title = p["base"], p["dur"], p["title"]
+        if name == None and not duration and not title: return
+        if duration and duration < 20 * 60: return
 
         # Only mods can purge themselves or Naoko.
         if name and (name in self.modList and not (name == user.nick.lower() or (user.mod and name == self.name.lower()))):
@@ -1280,15 +1281,15 @@ class Naoko(object):
         # unable to delete their own videos. This prevents them abusing it to delete
         # videos added by registered users.
         if user.uid == None: return
-        p = self._parseDeleteOptions(data)
+        p = self.parseParameters(data, 0b10111)
         if not p: return
-        name, duration, title = p
+        name, duration, title = p["base"], p["dur"], p["title"]
         
         # Non-mods and non-hybrid mods can only delete their own videos
         # This does prevent unregistered users from deleting their own videos
         if (not name == None or (title or duration)) and not (user.mod or self.hasPermission(user, "DELETE")): return
         if name == None and not duration and not title: 
-            target = user.nick
+            name = user.nick
         
         videoIndex = self.getVideoIndexById(self.state.current)
         i = len(self.vidlist) - 1
@@ -1301,67 +1302,21 @@ class Naoko(object):
         if i == videoIndex: return
         self.asLeader(package(self.send, "rm", self.vidlist[i].v_sid))
 
-    # Parses the options for deleting and purging videos
-    def _parseDeleteOptions(self, data):
-        text = data.lower().split("\"")
-        
-        params = re.split(" +", text[0])
-        if len(text) == 3:
-            if not text[1] or len(text[1]) < 4: return
-            params.append(-1)
-            params.extend(re.split(" +", text[2]))
-        elif len(text) != 1: return
-        params = deque(params) 
-        
-        name = None
-        duration = None
-        title = None
-        # Could be done with a huge regexp but this is probably cleaner and easier to maintain.
-        while params:
-            t = params.popleft()
-            if not t: continue
-            if t == -1: return
-            if t == "-unnamed":
-                if not name == None: return
-                name = ""
-            elif t == "-title":
-                if title or not params or params.popleft(): return 
-                if not params or not params.popleft() == -1 or len(text) < 3: return
-                title = text[1]
-            elif t == "-dur":
-                if duration or not params: return
-                duration = params.popleft()
-                if not duration or duration == -1: return
-
-                m = re.match("^(([0-9]*):)?([0-9]*)$", duration)
-                if not m: return
-                length = 0
-                g = m.groups()
-                if g[1]:
-                    length = int(g[1]) * 60
-                if g[2]:
-                    length += int(g[2])
-        
-                if length < 20: return
-                duration = length * 60
-            else:
-                if not name == None: return
-                name = self.filterString(t, True)[1]
-        return (name, duration, title)
-
     # Adds random videos from the database
     def addRandom(self, command, user, data):
         if not (user.mod or len(self.vidlist) <= 10 or self.hasPermission(user, "RANDOM")): return
-        num = None
+        
+        p = self.parseParameters(data, 0b1111)
+        if not p: return
+        num, duration, title, username = p["base"], p["dur"], p["title"], p["user"]
+        
         try:
-            num = int(data)
+            num = int(num)
+            if num > 20 or (not user.mod and not self.hasPermission(user, "RANDOM") and num > 5): return
         except (TypeError, ValueError) as e:
-            self.logger.debug(e)
-        # Default to 5, which is also the most non-mods can add at once 
-        if num is None:
+            if num: return
             num = 5
-        if num > 20 or (not user.mod and num > 5): return
-        self.sql_queue.append(package(self._addRandom, num))
+        self.sql_queue.append(package(self._addRandom, num, duration, title, username))
         self.sqlAction.set()
     
     # Retrieve the latest bans for the specified user
@@ -1419,47 +1374,48 @@ class Naoko(object):
     # Displays and possibly modifies the permissions of a hybrid mod.
     def permissions(self, command, user, data):
         m = re.match(r"^((\+|\-)((ALL)|(.*)) )?(.*)$", data.upper())
-        if m:
-            g = m.groups()
-            if g[5]:
-                if not user.mod: return
-                valid, name = self.filterString(g[5], True)
-                if not valid:
-                    self.enqueueMsg("Invalid name.")
-                    return
-            else:
-                if g[0]:
-                    self.enqueueMsg("No name given.")
-                    return
-                # Default to displaying the permissions for the current user.
-                name = user.nick
-            name = name.lower()
-            p = 0
-            if name in self.hybridModList:
-                p = self.hybridModList[name]
-            # Change permissions before displaying them.
-            # Only change permissions if the calling user is a mod, a valid name was given, and flags were specified.
-            # Also check whether a hybrid mod administrator is set.
-            if user.mod and g[0] and g[5] and ((not self.hmod_admin) or self.hmod_admin.lower() == user.nick.lower()):
-                mask = 0
-                if g[3]:
-                    mask = ~0
-                if g[4]:
-                    for ma, k in self.MASKS.itervalues():
-                        if g[4].find(k) != -1:
-                            mask |= ma
-                if g[1] == '+':
-                    p |= mask
-                else:
-                    p &= ~mask
-                self.hybridModList[name] = p
-                self._writePersistentSettings()
+        if not m: return
 
-            output = []
-            for ma, k in self.MASKS.itervalues():
-                if p & ma:
-                    output.append(k)
-            self.enqueueMsg("Permissions for %s: %s" % (name, "".join(output)))
+        g = m.groups()
+        if g[5]:
+            if not user.mod: return
+            valid, name = self.filterString(g[5], True)
+            if not valid:
+                self.enqueueMsg("Invalid name.")
+                return
+        else:
+            if g[0]:
+                self.enqueueMsg("No name given.")
+                return
+            # Default to displaying the permissions for the current user.
+            name = user.nick
+        name = name.lower()
+        p = 0
+        if name in self.hybridModList:
+            p = self.hybridModList[name]
+        # Change permissions before displaying them.
+        # Only change permissions if the calling user is a mod, a valid name was given, and flags were specified.
+        # Also check whether a hybrid mod administrator is set.
+        if user.mod and g[0] and g[5] and ((not self.hmod_admin) or self.hmod_admin.lower() == user.nick.lower()):
+            mask = 0
+            if g[3]:
+                mask = ~0
+            if g[4]:
+                for ma, k in self.MASKS.itervalues():
+                    if g[4].find(k) != -1:
+                        mask |= ma
+            if g[1] == '+':
+                p |= mask
+            else:
+                p &= ~mask
+            self.hybridModList[name] = p
+            self._writePersistentSettings()
+
+        output = []
+        for ma, k in self.MASKS.itervalues():
+            if p & ma:
+                output.append(k)
+        self.enqueueMsg("Permissions for %s: %s" % (name, "".join(output)))
 
     def restart(self, command, user, data):
         if user.mod or self.hasPermission(user, "RESTART"):
@@ -1600,6 +1556,70 @@ class Naoko(object):
                 self.enqueueMsg("[%s] %s" % (query, out))
         else:
             self.enqueueMsg("Wolfram Alpha query failed.")
+    
+    # Parses the parameters common to several functions.
+    # Returns a lone string, often a name or number, a title specified by -title and quotes, and
+    # a duration in seconds. The title must be at least 4 characters.
+    # A mask is passed to determine which options are looked for.
+    # base      : 1
+    # -title    : 1 << 1
+    # -dur      : 1 << 2
+    # -user     : 1 << 3
+    # -unnamed  : 1 << 4
+    def parseParameters(self, data, mask):
+        text = data.lower().split("\"")
+        
+        params = re.split(" +", text[0])
+        if len(text) == 3:
+            if not text[1] or len(text[1]) < 4: return
+            params.append(-1)
+            params.extend(re.split(" +", text[2]))
+        elif len(text) != 1: return
+        params = deque(params) 
+        
+        base = None
+        duration = None
+        title = None
+        user = None
+        # Could be done with a huge regexp but this is probably cleaner and easier to maintain.
+        while params:
+            t = params.popleft()
+            if not t: continue
+            if t == -1: return
+            if t == "-unnamed" and mask & (1 << 4):
+                if not base == None: return
+                base = ""
+            elif t == "-title" and mask & (1 << 1):
+                if title or not params or params.popleft(): return 
+                if not params or not params.popleft() == -1 or len(text) < 3: return
+                title = text[1]
+            elif t == "-dur" and mask & (1 << 2):
+                if duration or not params: return
+                duration = params.popleft()
+                if not duration or duration == -1: return
+
+                m = re.match("^(([0-9]*):)?([0-9]*)$", duration)
+                if not m: return
+                length = 0
+                g = m.groups()
+                if g[1]:
+                    length = int(g[1]) * 60
+                if g[2]:
+                    length += int(g[2])
+        
+                duration = length * 60
+            elif t == "-user" and mask & (1 << 3):
+                if user or not params: return
+                user = params.popleft()
+                if not user or user == -1: return
+            else:
+                if not t: continue
+                if not base == None or not mask & 1: return
+                base = self.filterString(t, True)[1]
+        return {"base"  : base,
+                "dur"   : duration,
+                "title" : title,
+                "user"  : user}
 
     # Two functions that search the lists in an efficient manner
 
@@ -1818,12 +1838,12 @@ class Naoko(object):
             for r in rows:
                 self.enqueueMsg("%s - %s by %s - %s" % (r[2], datetime.fromtimestamp(r[0] / 1000).isoformat(' '), r[3], r[1]))
 
-    def _addRandom(self, num):
+    def _addRandom(self, num, duration, title, user):
         # Limit to once every 5 seconds
         if time.time() - self.last_random < 5: return
         self.last_random = time.time()
-        self.logger.debug("Adding %d randomly selected videos", num)
-        vids = self.dbclient.getVideos(num, ['type', 'id', 'title', 'duration_ms'], ('RANDOM()',))
+        self.logger.debug("Adding %d randomly selected videos, with title like %s, and duration no more than %s seconds, posted by user %s", num, title, duration, user)
+        vids = self.dbclient.getVideos(num, ['type', 'id', 'title', 'duration_ms'], ('RANDOM()',), duration, title, user)
         self.logger.debug("Retrieved %s", vids)
         for v in vids:
             self.send("am", [v[0], v[1], self.filterString(v[2])[1],"http://i.ytimg.com/vi/%s/default.jpg" % (v[1]), v[3]/1000.0])
