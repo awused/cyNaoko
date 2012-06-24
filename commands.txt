@@ -94,10 +94,12 @@ banlist [-v]
     Hybrid mod permission +Q.
     Displays the list of currently banned users. If the -v flag is provided it also displays the IDs of the banned users.
 
-bump [name | -unnamed]
+bump [(name | -unnamed) [X]]
     Hybrid mod permission +B.
     Bumps the last video added by the specified user to the next spot on the playlist after the current video. If -unnamed is provided it will bump the last video without a name.
     This includes videos added by any unregistered user, named or unnamed.
+    Bumps X videos, defaulting to one, and with a maximum of 5. Bumps videos such that the relative order of the bumped videos is maintained. A number can only be specified after
+    a name or -unnamed.
 
 clean
     Hybrid mod permission +C.

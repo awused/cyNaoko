@@ -1182,33 +1182,49 @@ class Naoko(object):
     # If no name is provided it bumps the last video by the user who sent the command
     def bump(self, command, user, data):
         if not (user.mod or self.hasPermission(user, "BUMP")): return
-        target = data
+        
+        params = data.lower().split(" ",  1)
+        target = params[0]
         if target == "-unnamed":
             target = "" 
         elif target:
-            target = self.filterString(data, True)[1]
+            target = self.filterString(target, True)[1]
             # Don't bump anything if only invalid characters were provided.
             if not target: return
         else:
-            target = user.nick
-        target = target.lower()
+            target = user.nick.lower()
+        
+        num = 1
+        if len(params) > 1:
+            try:
+                num = int(params[1])
+                if num > 5: return
+            except (TypeError, ValueError) as e:
+                return
+        
         videoIndex = self.getVideoIndexById(self.state.current)
+        
+        bumpList = []
         i = len(self.vidlist) - 1
-        while i > videoIndex:
+        while i > videoIndex and len(bumpList) < num:
+            if i == videoIndex + 1 and not bumpList: return
             if self.vidlist[i].nick.lower() == target:
-                break
+                bumpList.append(self.vidlist[i].v_sid)
             i -= 1
-        if i == videoIndex: return
-        if i > videoIndex + 1:
-            output = dict()
-            output["id"] = self.vidlist[i].v_sid
+        
+        if bumpList:
+            after = None
             if videoIndex >= 0:
-                output["after"] = self.vidlist[videoIndex].v_sid
-            self.asLeader(package(self._bump, output.copy()))
+                after = self.vidlist[videoIndex].v_sid
+            self.asLeader(package(self._bump, list(bumpList), after))
     
-    def _bump(self, output):
-        self.send("mm", output)
-        self.moveMedia("mm", output)
+    def _bump(self, targets, after=None):
+        for t in targets:
+            output = {"id" : t}
+            if after:
+                output["after"] = after
+            self.send("mm", output)
+            self.moveMedia("mm", output)
 
     # Cleans all the videos above the currently playing video
     def cleanList(self, command, user, data):
