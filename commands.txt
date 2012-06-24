@@ -208,7 +208,6 @@ P - Purge
 K - Kick
 L - Lock, Unlock
 M - Mute, Unmute
-N - Removelong
 O - Steal, Mod
 P - Poll, EndPoll
 Q - Ban, Unban, Banlist

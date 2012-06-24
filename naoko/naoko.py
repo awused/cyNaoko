@@ -1287,10 +1287,10 @@ class Naoko(object):
         
         # Non-mods and non-hybrid mods can only delete their own videos
         # This does prevent unregistered users from deleting their own videos
-        if (not name == None or (title or duration)) and not (user.mod or self.hasPermission(user, "DELETE")): return
+        if (not name == None or title or duration) and not (user.mod or self.hasPermission(user, "DELETE")): return
         if name == None and not duration and not title: 
-            name = user.nick
-        
+            name = user.nick.lower()
+
         videoIndex = self.getVideoIndexById(self.state.current)
         i = len(self.vidlist) - 1
         while i > videoIndex:
