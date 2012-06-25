@@ -71,7 +71,7 @@ addrandom [Y | -title "X" | -dur (hours: | hours:minutes | :minutes | minutes) |
     Adds Y random videos to the list, where Y defaults to five. The maximum value of Y for mods is 20. Mods can call this regardless of the length of the playlist.
     The five second limit for successive calls still applies to mods.
     Also supports filters for videos.
-    Providing a title, in quotes, of length at least 4 characters will match any video with that substring in the title, ignoring case.
+    Providing a title, in quotes, of length at least 3 characters will match any video with that substring in the title, ignoring case.
     Providing a duration will match all videos with a length of at most that duration.
     Providing a username name will match all videos posted by a registered user with that name.
 
@@ -110,7 +110,7 @@ delete [name | -unnamed | -title "X" | -dur (hours: | hours:minutes | :minutes |
     Hybrid mod permission +D.
     In addition to the functionality outlined above, deletes the last video after the currently playing video matching a set of filters.
     Any combination of filters is supported, except combining a name and -unnamed. When combining filters only videos which match all provided filters will be removed.
-    Providing a title, in quotes, of length at least 4 characters will match any video with that substring in the title, ignoring case.
+    Providing a title, in quotes, of length at least 3 characters will match any video with that substring in the title, ignoring case.
     Providing a duration will match all videos with a length of at least that duration.
     Providing a name will match all videos posted by a registered user with that name.
     Providing -unnamed will match all videos added by unregistered users.
@@ -165,7 +165,7 @@ purge name | -unnamed | -title "X" | -dur (hours: | hours:minutes | :minutes | m
     Hybrid mod permission +G.
     Removes all videos, except the currently playing video, that match a set of filters.
     Any combination of filters is supported, except combining a name and -unnamed. When combining filters only videos which match all provided filters will be removed.
-    Providing a title, in quotes, of length at least 4 characters will match any video with that substring in the title, ignoring case.
+    Providing a title, in quotes, of length at least 3 characters will match any video with that substring in the title, ignoring case.
     Providing a duration of at least 20 minutes will match all videos with a length of at least that duration.
     Providing a name will match all videos posted by a registered user with that name.
     Providing -unnamed will match all videos added by unregistered users.

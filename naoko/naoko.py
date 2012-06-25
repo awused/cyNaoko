@@ -1575,7 +1575,7 @@ class Naoko(object):
     
     # Parses the parameters common to several functions.
     # Returns a lone string, often a name or number, a title specified by -title and quotes, and
-    # a duration in seconds. The title must be at least 4 characters.
+    # a duration in seconds. The title must be at least 3 characters.
     # A mask is passed to determine which options are looked for.
     # base      : 1
     # -title    : 1 << 1
@@ -1587,7 +1587,7 @@ class Naoko(object):
         
         params = re.split(" +", text[0])
         if len(text) == 3:
-            if not text[1] or len(text[1]) < 4: return
+            if not text[1] or len(text[1]) < 3: return
             params.append(-1)
             params.extend(re.split(" +", text[2]))
         elif len(text) != 1: return
