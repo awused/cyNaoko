@@ -992,6 +992,10 @@ class Naoko(object):
         msg = data[1]
         self.chat_logger.info("%s: %r" , user.nick, msg)
 
+        self.sql_queue.append(package(self.dbclient.insertChat, msg=msg, username=user.nick, 
+                    userid=user.uid, timestamp=None, protocol='ST', channel=self.room, flags=None))
+        self.sqlAction.set()
+
         if not user.sid == self.sid and self.irc_nick:
             self.irc_queue.append("(" + user.nick + ") " + msg)
 

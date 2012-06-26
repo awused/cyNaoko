@@ -2,10 +2,16 @@
 
 import sqlite3
 import logging
-from settings import LOG_LEVEL
+import time
+try:
+    from naoko.settings import LOG_LEVEL
+except:
+    # This probably only happens when executing this directly
+    print "Defaulting to LOG_LEVEL debug [%s]" % (__name__)
+    LOG_LEVEL = logging.DEBUG
 
 ProgrammingError = sqlite3.ProgrammingError
-DatabaseError    = sqlite3.DatabaseError
+DatabaseError = sqlite3.DatabaseError
 
 
 def dbopen(fn):
@@ -63,7 +69,7 @@ class NaokoDB(object):
     """
 
     _dbinfo_sql = "SELECT name FROM sqlite_master WHERE type='table'"
-    _required_tables = set(['video_stats', 'videos'])
+    _required_tables = set(["video_stats", "videos", "user_count", "bans", "chat"])
 
     # Low level database handling methods
     def __enter__(self):
@@ -81,12 +87,12 @@ class NaokoDB(object):
             with self.execute(self._dbinfo_sql) as cur:
                 return set([table[0] for table in cur.fetchall()])
 
-        tables = set(getTables())
+        #tables = set(getTables())
 
         # run self.initscript if we have an empty db (one with no tables)
-        if len(tables) is 0:
-            self.initdb()
-            tables = set(getTables())
+        #if len(tables) is 0:
+        self.initdb()
+        tables = set(getTables())
 
         if not self._required_tables <= tables:
             raise ValueError("Database '%s' is non-empty but "
@@ -278,6 +284,42 @@ class NaokoDB(object):
         with self.execute(sql, binds) as cur:
             return cur.fetchall()
 
+    def insertChat(self, msg, username, userid=None, timestamp=None, protocol='ST', channel=None, flags=None):
+        """
+        Insert chat message into the chat table of Naoko's database.
+
+        msg is the chat message to be inserted.
+
+        username is the sender of the chat message.
+
+        userid is the userid of the sender of the chat message. This may
+        not make sense for all protocols. By default it is None.
+
+        timestamp is the timestamp the message was received. If None
+        timestamp will default to the time insertChat was called.
+
+        proto is the protocol over which the message was sent. The
+        default protocol is 'ST'.
+
+        channel is the channel or room for which the message was 
+        intended. The default is None.
+
+        flags are any miscellaneous flags attached to the user/message.
+        this is intended to denote things such as emotes, video adds, etc.
+        By default it is None.
+        """
+        if userid is None:
+            userid = username
+        
+        if timestamp is None:
+            timestamp = int(time.time())
+
+        chat = (timestamp, username, userid, msg, protocol, channel, flags)
+        with self.cursor() as cur:
+            self.logger.debug("Inserting chat message %s" % (chat,))
+            cur.execute("INSERT INTO chat VALUES(?, ?, ?, ?, ?, ?, ?)", chat)
+        self.commit()
+
 # Run some tests if called directly
 if __name__ == '__main__':
     logging.basicConfig(format='%(name)-15s:%(levelname)-8s - %(message)s')
@@ -298,7 +340,34 @@ if __name__ == '__main__':
 
     print "**Testing database creation with :memory: database"
 
-    with NaokoDB(':memory:', file('../naoko.sql').read()) as db:
+    with NaokoDB(':memory:', file('naoko.sql').read()) as db:
+
+        print "**Testing chat message insertion"
+        # Test defaults
+        db.insertChat('Message 2', 'falaina')
+
+        # Trivial test
+        db.insertChat('Message 1', 'Kaworu', userid=None, timestamp='1',
+                      protocol='IRC', channel='Denshi', flags='o')
+
+        with db.cursor() as cur:
+            cur.execute('SELECT * FROM chat ORDER by timestamp');
+
+            rows = cur.fetchall()
+            print "**Retrieved rows: %s" % (rows,)
+
+            assert len(rows) == 2, 'Inserted 2 rows, but did not retrieve 2'
+            
+            # The first message should be Kaworu: Message 1 due to 
+            # a timestamp of 1
+            assert rows[0][0] is 1, 'Incorrect timestamp'
+            assert rows[0][1] == 'Kaworu', 'Incorrect name for Kaworu'
+
+            # Second message should be Falaina: Message 2
+            assert rows[1][3] == 'Message 2', 'Incorrect message for Falaina'
+            assert rows[1][4] == 'ST', 'Incorrect protocol for Falaina'
+ 
+        print "**CHAT TESTS SUCCEEDED\n\n\n"
         with db.cursor() as cur:
             print "**Inserting videos into database: %s" % (vids)
             cur.executemany("INSERT INTO videos VALUES(?, ?, ?, ?)", vids)
@@ -366,3 +435,6 @@ if __name__ == '__main__':
             raise AssertionError("reversed rows not actually reversed\n"
                         "[Actual:   %s]\n[Expected: %s]"
                         % (reversed_rows, expected_rows))
+       
+        print "**VIDEO TESTS SUCCEEDED\n\n\n"
+
