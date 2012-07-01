@@ -230,7 +230,7 @@ class NaokoDB(object):
 
         binds = ()
         sel_list  = ', '.join(sel_cols)
-        sel_cls   = 'SELECT %s' % (sel_list)
+        sel_cls   = 'SELECT DISTINCT %s' % (sel_list)
         from_cls  = ' FROM video_stats vs, videos v '
         where_cls = ' WHERE vs.type = v.type AND vs.id = v.id '
         

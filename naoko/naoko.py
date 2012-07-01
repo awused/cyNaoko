@@ -834,7 +834,7 @@ class Naoko(object):
     def shuffle(self, tag, data):
         self._shuffle(data)
         if self.shuffleBump:
-            self._bump({"id" : self.shuffleBump})
+            self._bump((self.shuffleBump, ))
             self.shuffleBump = False
             if self.deferredToss & self.DEFERRED_MASKS["SHUFFLE"]:
                 self.deferredToss &= ~self.DEFERRED_MASKS["SHUFFLE"]
@@ -1329,7 +1329,10 @@ class Naoko(object):
         p = self.parseParameters(data, 0b1111)
         if not p: return
         num, duration, title, username = p["base"], p["dur"], p["title"], p["user"]
-        
+       
+        if duration or title or username:
+            if not (user.mod or self.hasPermission(user, "RANDOM")): return 
+
         try:
             num = int(num)
             if num > 20 or (not user.mod and not self.hasPermission(user, "RANDOM") and num > 5): return
