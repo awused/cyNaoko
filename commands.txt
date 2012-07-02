@@ -28,6 +28,9 @@ XdY
 help
     Links to this file.
 
+permute choice [choice ...]
+    Responds with a permutation of the given choices.
+
 status
     Displays whether Naoko is muted or not. This is displayed even if she is muted.
 
@@ -71,78 +74,78 @@ addrandom [Y | -title "X" | -dur (hours: | hours:minutes | :minutes | minutes) |
     Adds Y random videos to the list, where Y defaults to five. The maximum value of Y for mods is 20. Mods can call this regardless of the length of the playlist.
     The five second limit for successive calls still applies to mods.
     Also supports filters for videos.
-    Providing a title, in quotes, of length at least 3 characters will match any video with that substring in the title, ignoring case.
-    Providing a duration will match all videos with a length of at most that duration.
-    Providing a username name will match all videos posted by a registered user with that name.
+Providing a title, in quotes, of length at least 3 characters will match any video with that substring in the title, ignoring case.
+Providing a duration will match all videos with a length of at most that duration.
+Providing a username name will match all videos posted by a registered user with that name.
 
 autolead on | off
-    Hybrid more permission +U.
-    Sets whether Naoko will automatically take leader when she reconnects. She will (currently) not automatically take leader when there is no playlist.
+Hybrid more permission +U.
+Sets whether Naoko will automatically take leader when she reconnects. She will (currently) not automatically take leader when there is no playlist.
 
 autosetskip on | off | none | number | percentage
-    Hybrid mod permission +V.
-    Changes the default skip settings that will be set whenever Naoko reconnects. This will override any current settings in the room even if she is only restarted
-    with the restart command.
-    See setskip for an explanation of the possible parameters. If none is sent autosetskip will be disabled.
+Hybrid mod permission +V.
+Changes the default skip settings that will be set whenever Naoko reconnects. This will override any current settings in the room even if she is only restarted
+with the restart command.
+See setskip for an explanation of the possible parameters. If none is sent autosetskip will be disabled.
 
 ban name [reason]
-    Hybrid Mod permission +Q.
-    Bans the specified user. The reason, which defaults to "Requested," is not displayed to the user who is being banned, though it is stored in the database.
-    Cannot ban mods.
+Hybrid Mod permission +Q.
+Bans the specified user. The reason, which defaults to "Requested," is not displayed to the user who is being banned, though it is stored in the database.
+Cannot ban mods.
 
 banlist [-v]
-    Hybrid mod permission +Q.
-    Displays the list of currently banned users. If the -v flag is provided it also displays the IDs of the banned users.
+Hybrid mod permission +Q.
+Displays the list of currently banned users. If the -v flag is provided it also displays the IDs of the banned users.
 
 bump [(name | -unnamed) [X]]
-    Hybrid mod permission +B.
-    Bumps the last video added by the specified user to the next spot on the playlist after the current video. If -unnamed is provided it will bump the last video without a name.
-    This includes videos added by any unregistered user, named or unnamed.
-    Bumps X videos, defaulting to one, and with a maximum of 5. Bumps videos such that the relative order of the bumped videos is maintained. A number can only be specified after
-    a name or -unnamed.
+Hybrid mod permission +B.
+Bumps the last video added by the specified user to the next spot on the playlist after the current video. If -unnamed is provided it will bump the last video without a name.
+This includes videos added by any unregistered user, named or unnamed.
+Bumps X videos, defaulting to one, and with a maximum of 5. Bumps videos such that the relative order of the bumped videos is maintained. A number can only be specified after
+a name or -unnamed.
 
 clean
-    Hybrid mod permission +C.
-    Cleans the playlist by removing all the videos that are above the current video in the playlist.
-    Naoko does not check or have any way of telling if those videos have actually been played or not.
+Hybrid mod permission +C.
+Cleans the playlist by removing all the videos that are above the current video in the playlist.
+Naoko does not check or have any way of telling if those videos have actually been played or not.
 
 delete [name | -unnamed | -title "X" | -dur (hours: | hours:minutes | :minutes | minutes)]
-    Hybrid mod permission +D.
-    In addition to the functionality outlined above, deletes the last video after the currently playing video matching a set of filters.
-    Any combination of filters is supported, except combining a name and -unnamed. When combining filters only videos which match all provided filters will be removed.
-    Providing a title, in quotes, of length at least 3 characters will match any video with that substring in the title, ignoring case.
-    Providing a duration will match all videos with a length of at least that duration.
-    Providing a name will match all videos posted by a registered user with that name.
-    Providing -unnamed will match all videos added by unregistered users.
+Hybrid mod permission +D.
+In addition to the functionality outlined above, deletes the last video after the currently playing video matching a set of filters.
+Any combination of filters is supported, except combining a name and -unnamed. When combining filters only videos which match all provided filters will be removed.
+Providing a title, in quotes, of length at least 3 characters will match any video with that substring in the title, ignoring case.
+Providing a duration will match all videos with a length of at least that duration.
+Providing a name will match all videos posted by a registered user with that name.
+Providing -unnamed will match all videos added by unregistered users.
 
 duplicates
-    Hybrid mod permission +T.
-    Deletes duplicate videos from the playlist. Will not remove the currently playing video even if it is a duplicate.
-    Leaves the first occurence of any duplicated video on the list, even if it is above the currently playing video.
+Hybrid mod permission +T.
+Deletes duplicate videos from the playlist. Will not remove the currently playing video even if it is a duplicate.
+Leaves the first occurence of any duplicated video on the list, even if it is above the currently playing video.
 
 endpoll
-    Hybrid mod permissions +G.
-    Ends the current poll.
+Hybrid mod permissions +G.
+Ends the current poll.
 
 hybridmods [on | off]
-    Enables or disables hybrid mods if on or off are passed.
-    With neither Naoko will list all the current hybridmods with active permissions.
-    This is written to the hybridmods file so the status will be maintained.
+Enables or disables hybrid mods if on or off are passed.
+With neither Naoko will list all the current hybridmods with active permissions.
+This is written to the hybridmods file so the status will be maintained.
 
 kick (name [reason]) | -unnamed | -unregistered
-    Hybrid mod permission +K.
-    Kicks the specified user. The reason, which defaults to "Requested," is displayed to the user who is being kicked.
-    If -unnamed or -unregistered is passed instead, it will kick all unnamed users or all unregistered users at once. Only real mods can use these values.
-    Cannot kick mods.
+Hybrid mod permission +K.
+Kicks the specified user. The reason, which defaults to "Requested," is displayed to the user who is being kicked.
+If -unnamed or -unregistered is passed instead, it will kick all unnamed users or all unregistered users at once. Only real mods can use these values.
+Cannot kick mods.
 
 lastban [name | -all]
 lastbans [(name | -all) [X]]
-    Displays the last X bans, where X defaults to 1, of any users with the given name. If -all is provided instead of a name the last X bans for any users will b displayed.
+Displays the last X bans, where X defaults to 1, of any users with the given name. If -all is provided instead of a name the last X bans for any users will b displayed.
 
 lock
 unlock
-    Hybrid mod permission +L.
-    Locks or unlocks the playlist.
+Hybrid mod permission +L.
+Locks or unlocks the playlist.
 
 mod name
     Hybrid mod permission +O.

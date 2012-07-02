@@ -582,6 +582,7 @@ class Naoko(object):
                                 "lock"              : self.lock,
                                 "unlock"            : self.lock,
                                 "choose"            : self.choose,
+                                "permute"           : self.permute,
                                 "ask"               : self.ask,
                                 "8ball"             : self.eightBall,
                                 "kick"              : self.kick,
@@ -617,6 +618,7 @@ class Naoko(object):
     def _initIRCCommandHandlers(self):
         self.ircCommandHandlers = {"status"            : self.status,
                                    "choose"            : self.choose,
+                                   "permute"           : self.permute,
                                    "ask"               : self.ask,
                                    "8ball"             : self.eightBall,
                                    "steak"             : self.steak,
@@ -1449,6 +1451,13 @@ class Naoko(object):
         choices = data
         if not choices: return
         self.enqueueMsg("[Choose: %s] %s" % (choices, random.choice(choices.split())))
+
+    def permute(self, command, user, data):
+        if not data: return
+        choices = data.split()
+        if not choices: return
+        random.shuffle(choices)
+        self.enqueueMsg("[Permute] %s" % (" ".join(choices)))
 
     def steak(self, command, user, data):
         self.enqueueMsg("There is no steak.")
