@@ -4,7 +4,7 @@ import sqlite3
 import logging
 import time
 try:
-    from naoko.settings import LOG_LEVEL
+    from settings import LOG_LEVEL
 except:
     # This probably only happens when executing this directly
     print "Defaulting to LOG_LEVEL debug [%s]" % (__name__)
