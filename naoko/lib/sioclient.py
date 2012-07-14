@@ -225,7 +225,7 @@ class SocketIOClient(object):
         self.hbthread = threading.Thread(target=SocketIOClient._heartbeat, args=[self])
 
     def _heartbeat(self):
-        self.sendHeartBeat(5)
+        self.sendHeartBeat(HEARTBEATS)
         self.sched.run()
 
     def __getSessionInfo(self):

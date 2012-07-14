@@ -1504,7 +1504,7 @@ class Naoko(object):
             return
 
         target = self.getUserByNick(args[0])
-        if not target or target.mod: return
+        if not target or target.mod or target.sid == self.sid: return
         self.logger.info("Kick Target %s Requestor %s", target.nick, user.nick)
         if len(args) > 1:
             self.asLeader(package(self._kickUser, target.sid, args[1]))
@@ -1519,7 +1519,7 @@ class Naoko(object):
         if not data or not (user.mod or self.hasPermission(user, "BAN")): return
         args = data.split(' ', 1)
         target = self.getUserByNick(args[0])
-        if not target or target.mod: return
+        if not target or target.mod or target.sid == self.sid: return
         self.logger.info("Ban Target %s Requestor %s", target, user)
         if len(args) > 1:
             self.asLeader(package(self._banUser, target.sid, args[1], modName=user.nick))
