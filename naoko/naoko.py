@@ -121,7 +121,8 @@ class Naoko(object):
         "AUTOLEAD"      : ((1 << 15), 'U'), # U - Autolead.
         "AUTOSKIP"      : ((1 << 16), 'V'), # V - Autosetskip.
         "POLL"          : ((1 << 17), 'P'), # P - Start and end polls.
-        "SHUFFLE"       : ((1 << 18), 'F')} # F - Shuffle.
+        "SHUFFLE"       : ((1 << 18), 'F'), # F - Shuffle.
+        "UNREGSPAMBAN"  : ((1 << 19), 'I')} # I - Change whether unregistered users are banned for spamming or have multiple chances.
 
     # Bitmasks for deferred tosses
     DEFERRED_MASKS = {
@@ -157,6 +158,7 @@ class Naoko(object):
         self.banTracker = {}
         self.modList = set()
         self.shuffleBump = False
+        self.unregSpamBan = False
         self.userCountTime = time.time() - USER_COUNT_THROTTLE
         
         # Keep all the state information together
@@ -270,6 +272,7 @@ class Naoko(object):
         self.apithread.start()
 
         if self.irc_nick:
+            self.ircclient = False
             self.ircthread = threading.Thread(target=Naoko._ircloop, args=[self])
             self.ircthread.start()
 
@@ -525,6 +528,9 @@ class Naoko(object):
             self.autoSkip = line[:-1]
             line = f.readline()
             
+            self.unregSpamBan = (line == "ON\n")
+            line = f.readline()
+            
             self.hybridModStatus = (line == "ON\n")
             self.hybridModList = {}
             line = f.readline()
@@ -613,7 +619,8 @@ class Naoko(object):
                                 "autosetskip"       : self.autoSetSkip,
                                 "poll"              : self.poll,
                                 "endpoll"           : self.endPoll,
-                                "shuffle"           : self.shuffleList}
+                                "shuffle"           : self.shuffleList,
+                                "unregspamban"      : self.setUnregSpamBan}
 
     def _initIRCCommandHandlers(self):
         self.ircCommandHandlers = {"status"            : self.status,
@@ -703,7 +710,7 @@ class Naoko(object):
         self.apiAction.set()
         self.sqlAction.set()
         self.stAction.set()
-        if self.irc_nick:
+        if self.irc_nick and self.ircclient:
             self.ircclient.close()
 
     # Bans a user for changing to an invalid name
@@ -787,7 +794,7 @@ class Naoko(object):
                 self.banTracker[user.nick] = 1
 
             reason = "[%d times] %s" % (self.banTracker[user.nick], reason)
-            if self.banTracker[user.nick] >= 3:
+            if self.banTracker[user.nick] >= 3 or (not user.uid and self.unregSpamBan):
                 self.banTracker.pop(user.nick)
                 self.asLeader(package(self._banUser, user.sid, reason))
             else:
@@ -1088,7 +1095,7 @@ class Naoko(object):
         self.send("vote_settings", settings)
 
     def autoSetSkip(self, command, user, data):
-        if not (user.mod or self.hasPermissions(user, "AUTOSKIP")): return
+        if not (user.mod or self.hasPermission(user, "AUTOSKIP")): return
         m = re.match("^((none)|(on)|(off)|([1-9][0-9]*)(%)?)( .*)?$", data, re.IGNORECASE)
         if m:
             self.autoSkip = m.groups()[0].lower()
@@ -1098,7 +1105,7 @@ class Naoko(object):
             self.enqueueMsg("Invalid skip setting.")
 
     def autoLeader(self, command, user, data):
-        if not (user.mod or self.hasPermissions(user, "AUTOLEAD")): return
+        if not (user.mod or self.hasPermission(user, "AUTOLEAD")): return
         d = data.lower()
         if d == "on":
             self.autoLead = True
@@ -1109,8 +1116,20 @@ class Naoko(object):
             self.enqueueMsg("Automatic leading is disabled.")
             self._writePersistentSettings()
 
+    def setUnregSpamBan(self, command, user, data):
+        if not (user.mod or self.hasPermission(user, "UNREGSPAMBAN")): return
+        d = data.lower()
+        if d == "on":
+            self.unregSpamBan = True
+            self.enqueueMsg("Unregistered spammers will be banned for the first offense.")
+            self._writePersistentSettings()
+        if d == "off":
+            self.unregSpamBan = False
+            self.enqueueMsg("Unregistered spammers will have three chances.")
+            self._writePersistentSettings()
+
     def shuffleList(self, command, user, data):
-        if not (user.mod or self.hasPermissions(user, "SHUFFLE")): return
+        if not (user.mod or self.hasPermission(user, "SHUFFLE")): return
         self.shuffleBump = self.state.current
         self.asLeader(package(self.send, "shuffle"), deferred=self.DEFERRED_MASKS["SHUFFLE"]) 
 
@@ -1373,9 +1392,11 @@ class Naoko(object):
         msg += "Enabled" if self.hybridModStatus else "Disabled"
         msg += ", Automatic Leading "
         msg += "Enabled" if self.autoLead else "Disabled"
-        msg += ", Automatic Skip Mode: %s]" % (self.autoSkip)
+        msg += ", Automatic Skip Mode: %s" % (self.autoSkip)
+        msg += ", Unregistered Spammers: "
+        msg += "One Chance]" if self.unregSpamBan else "3 Chances]"
         self.sendChat(msg)
-        if self.irc_nick:
+        if self.irc_nick and self.ircclient:
             self.ircclient.sendMsg(msg)
 
     def hybridMods(self, command, user, data):
@@ -1744,6 +1765,7 @@ class Naoko(object):
             f.write("# This is a file generated by Naoko.\n# Do not edit it manually unless you know what you are doing.\n")
             f.write("ON\n" if self.autoLead else "OFF\n")
             f.write("%s\n" % (self.autoSkip))
+            f.write("ON\n" if self.unregSpamBan else "OFF\n")
             f.write("ON\n" if self.hybridModStatus else "OFF\n")
             for h, v in self.hybridModList.iteritems():
                 if v:
