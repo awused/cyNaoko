@@ -75,7 +75,7 @@ addrandom [Y | -title "X" | -dur (hours: | hours:minutes | :minutes | minutes) |
     The five second limit for successive calls still applies to mods.
     Also supports filters for videos.
     Providing a title, in quotes, of length at least 3 characters will match any video with that substring in the title, ignoring case.
-    Providing a duration will match all videos with a length of at most that duration.
+    Providing a duration will match all videos with a length of at most that duration. If no durations is provided it will default to ten minutes.
     Providing a username name will match all videos posted by a registered user with that name.
 
 autolead on | off
@@ -97,12 +97,12 @@ banlist [-v]
     Hybrid mod permission +Q.
     Displays the list of currently banned users. If the -v flag is provided it also displays the IDs of the banned users.
 
-bump [(name | -unnamed) [X]]
+bump [(name | -unnamed | -) [X]]
     Hybrid mod permission +B.
     Bumps the last video added by the specified user to the next spot on the playlist after the current video. If -unnamed is provided it will bump the last video without a name.
+    If a hyphen is provided it will behave the same as if no name is supplied, but will allow for multiple videos to be bumped at once.
     This includes videos added by any unregistered user, named or unnamed.
-    Bumps X videos, defaulting to one, and with a maximum of 5. Bumps videos such that the relative order of the bumped videos is maintained. A number can only be specified after
-    a name or -unnamed.
+    Bumps X videos, defaulting to one, and with a maximum of 5. Bumps videos such that the relative order of the bumped videos is maintained.
 
 clean
     Hybrid mod permission +C.
@@ -162,7 +162,7 @@ permissions [(+ | -) (all | flags)] name
 
 poll title*option*option[*option...]
     Hybrid mod permission +P.
-    Creates a poll with the given list of asterisk separated options and the given title.
+    Creates a poll with the given list of asterisk separated options and the given title, at least two choices are required.
 
 purge name | -unnamed | -title "X" | -dur (hours: | hours:minutes | :minutes | minutes)
     Hybrid mod permission +G.

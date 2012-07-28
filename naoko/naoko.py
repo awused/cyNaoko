@@ -1212,7 +1212,7 @@ class Naoko(object):
         target = params[0]
         if target == "-unnamed":
             target = "" 
-        elif target:
+        elif target and target != "-":
             target = self.filterString(target, True)[1]
             # Don't bump anything if only invalid characters were provided.
             if not target: return
@@ -1299,8 +1299,6 @@ class Naoko(object):
         if name and (name in self.modList and not (name == user.nick.lower() or (user.mod and name == self.name.lower()))):
             return
 
-        if name == "" and not user.mod: return
-
         kill = []
         for v in self.vidlist:
             # Only purge videos that match all criteria
@@ -1352,7 +1350,10 @@ class Naoko(object):
         num, duration, title, username = p["base"], p["dur"], p["title"], p["user"]
        
         if duration or title or username:
-            if not (user.mod or self.hasPermission(user, "RANDOM")): return 
+            if not (user.mod or self.hasPermission(user, "RANDOM")): return
+
+        if not duration:
+            duration = 600
 
         try:
             num = int(num)
