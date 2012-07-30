@@ -429,6 +429,14 @@ class Naoko(object):
                 elif data.find("NOTICE " + self.irc_nick[:24] + "_naoko :Access denied.") != -1:
                     self.disableIRC("IRC nickname in use and incorrect password provided. Disabling IRC support.")
                     return
+                elif data[:5] == "ERROR":
+                    err = "Unknown Error"
+                    if data.find("(") != -1 and data.find(")") != -1:
+                        err = data[data.find("(") + 1:data.find(")")]
+                    self.disableIRC("IRC connection closed due to %s. Restarting in 2 minutes." % (err))
+                    time.sleep(2*60)
+                    self.close()
+
         else:
             self.logger.info("IRC Loop Closed")
             self.close()
@@ -1021,7 +1029,7 @@ class Naoko(object):
         else:
             # Currently the only two blacklisted phrases are links to other Synchtube rooms.
             # Links to the current room or the Synchtube homepage aren't blocked.
-            m = re.search(r"(synchtube\.com\/r\/|synchtu\.be\/)(%s)?" % (self.room), msg, re.IGNORECASE)
+            m = re.search(r"(synchtube\.com\/r\/|synchtu\.be\/|clickbank\.net)(%s)?" % (self.room), msg, re.IGNORECASE)
             if m and not m.groups()[1]:
                 self.logger.info("Attempted kick/ban of %s for blacklisted phrase", user.nick)
                 reason = "%s sent a blacklisted message" % (user.nick)
