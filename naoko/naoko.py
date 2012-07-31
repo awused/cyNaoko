@@ -628,7 +628,8 @@ class Naoko(object):
                                 "poll"              : self.poll,
                                 "endpoll"           : self.endPoll,
                                 "shuffle"           : self.shuffleList,
-                                "unregspamban"      : self.setUnregSpamBan}
+                                "unregspamban"      : self.setUnregSpamBan,
+                                "add"               : self.add}
 
     def _initIRCCommandHandlers(self):
         self.ircCommandHandlers = {"status"            : self.status,
@@ -1388,6 +1389,28 @@ class Naoko(object):
         self.sql_queue.append(package(self._lastBans, target, num))
         self.sqlAction.set()
 
+    def add(self, command, user, data):
+        site = False
+        vid = False
+        if data.lower().find("youtube") != -1:
+            x = data.find("v=")
+            if x != -1:
+                site = "yt"
+                vid = data[x + 2:x + 13]
+        if site and self._checkVideoId(site, vid):
+            self.api_queue.append(package(self._add, site, vid))
+            self.apiAction.set()
+
+    def _add(self, site, vid):
+        data = self.apiclient.getVideoInfo(site, vid)
+        if not data or data == "Unknown":
+            return
+        
+        title, dur, valid = data
+        if valid:
+            self.logger.debug("Adding video %s %s %s %s", title, site, vid, dur)
+            self.stExecute(package(self.asLeader, package(self.send, "am", [site, vid, self.filterString(title)[1], "http://i.ytimg.com/vi/%s/default.jpg" % (vid), dur])))
+        
     def lock(self, command, user, data):
         if not (user.mod or self.hasPermission(user, "LOCK")): return
         if self.room_info["lock?"] == (command == "lock"): return
@@ -1706,20 +1729,24 @@ class Naoko(object):
     # Returns whether or not a video id could possibly be valid
     # Guards against possible attacks and annoyances
     def checkVideoId(self, vi):
-        if not vi.vid: return False
+        if not vi.vid or not vi.site: return False
 
         vid = vi.vid
         if type(vid) is not str and type(vid) is not unicode:
             vid = str(vid)
+        
+        return self._checkVideoId(vi.site, vid)
 
-        if vi.site == "yt":
+    def _checkVideoId(self, site, vid):
+
+        if site == "yt":
             return re.match("^[a-zA-Z0-9\-_]+$", vid)
-        elif vi.site == "dm":
+        elif site == "dm":
             return re.match("^[a-zA-A0-9]+$", vid)
-        elif vi.site == "vm" or vi.site == "sc":
+        elif site == "vm" or site == "sc" or site == "bt":
             return re.match("^[0-9]+$", vid)
         else:
-            return True
+            return False
 
     # Filters a string, removing invalid characters
     # Used to sanitize nicks or video titles for printing
@@ -1908,6 +1935,9 @@ class Naoko(object):
         self.logger.debug("Adding %d randomly selected videos, with title like %s, and duration no more than %s seconds, posted by user %s", num, title, duration, user)
         vids = self.dbclient.getVideos(num, ['type', 'id', 'title', 'duration_ms'], ('RANDOM()',), duration, title, user)
         self.logger.debug("Retrieved %s", vids)
+        self.stExecute(package(self.asLeader, package(self._addVideosToList, list(vids))))
+
+    def _addVideosToList(self, vids):
         for v in vids:
             self.send("am", [v[0], v[1], self.filterString(v[2])[1],"http://i.ytimg.com/vi/%s/default.jpg" % (v[1]), v[3]/1000.0])
 
