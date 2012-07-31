@@ -188,7 +188,17 @@ class Naoko(object):
             if login_res_headers.has_key('Set-Cookie'):
                 self._HEADERS['Cookie'] = login_res_headers['Set-Cookie']
             self.logger.info("Login successful")
-        room_req = Request("http://www.synchtube.com/r/%s" % (self.room), headers=self._HEADERS)
+        
+        room_url = "http://www.synchtube.com/r/%s" % (self.room)
+        
+        if self.room_pw:
+            self.logger.info("Attempting to join password protected room.")
+            room_body = {'personalpassword' : self.room_pw.encode('utf-8')};
+            room_data = urllib.urlencode(room_body)
+            room_req = Request(room_url, data=room_data, headers=self._HEADERS)
+        else:
+            room_req = Request(room_url, headers=self._HEADERS)
+        
         room_res = urlopen(room_req)
         room_res_body = room_res.read()
 
@@ -1390,6 +1400,7 @@ class Naoko(object):
         self.sqlAction.set()
 
     def add(self, command, user, data):
+        if not user.uid: return
         site = False
         vid = False
         if data.lower().find("youtube") != -1:
@@ -1839,24 +1850,26 @@ class Naoko(object):
     # Also updates the duration if necessary to prevent certain types of annoying attacks on the room.
     def _checkVideo(self, vi):
         data = self.apiclient.getVideoInfo(vi.site, vi.vid)
+        print data
         if data:
             if data != "Unknown":
                 title, dur, embed = data
                 if not embed:
                     self.logger.debug("Embedding disabled.")
-                    return "Embedding disabled." 
+                    self.invalidVideo("Embedding disabled.")
+                    return
                 # When someone has manually added a video with an incorrect duration.
                 elif self.state.dur != dur:
                     self.logger.debug("Duration mismatch: %d expected, %.3f actual." % (self.state.dur, dur))
                     self.state.dur = dur
                     self.playerAction.set()
-            return None
-        return "Invalid video."
+            return
+        self.invalidVideo("Invalid video.")
 
     # Validates a video before inserting it into the database.
     # Will correct invalid durations and titles for Youtube videos.
     # This makes SQL inserts dependent on the external API.
-    def _validateAddVideo(self, v):
+    def _validateAddVideo(self, v, sql=True):
         vi = v.vidinfo
         dur = vi.dur
         title = vi.title
@@ -1886,10 +1899,11 @@ class Naoko(object):
         # Don't insert videos added by Naoko.
         if str(v.uid) == self.userid: return
 
-        # The insert the video using the retrieved title and duration.
-        # Trust the external APIs over the Synchtube playlist.
-        self.sql_queue.append(package(self._sqlInsertVideo, v, title, dur))
-        self.sqlAction.set()
+        if sql:
+            # The insert the video using the retrieved title and duration.
+            # Trust the external APIs over the Synchtube playlist.
+            self.sql_queue.append(package(self._sqlInsertVideo, v, title, dur))
+            self.sqlAction.set()
 
     def _sqlInsertVideo(self, v, title, dur):
         vi = v.vidinfo
@@ -1942,7 +1956,7 @@ class Naoko(object):
             self.send("am", [v[0], v[1], self.filterString(v[2])[1],"http://i.ytimg.com/vi/%s/default.jpg" % (v[1]), v[3]/1000.0])
 
     # Add the video described by v
-    def _addVideo(self, v, check=True):
+    def _addVideo(self, v, sql=True):
         if self.stthread != threading.currentThread():
             raise Exception("_addVideo should not be called outside the Synchtube thread")
         v[0] = v[0][:len(SynchtubeVidInfo._fields)]
@@ -1968,9 +1982,8 @@ class Naoko(object):
         self.vidlist.append(vid)
         self.vidLock.release()
         
-        if check:
-            self.api_queue.append(package(self._validateAddVideo, vid))
-            self.apiAction.set()
+        self.api_queue.append(package(self._validateAddVideo, vid, sql))
+        self.apiAction.set()
 
     def _removeVideo(self, v):
         if self.stthread != threading.currentThread():
@@ -2038,6 +2051,7 @@ class Naoko(object):
         config = ConfigParser.RawConfigParser()
         config.read("naoko.conf")
         self.room = config.get("naoko", "room")
+        self.room_pw = config.get("naoko", "room_pw")
         self.name = config.get("naoko", "nick")
         self.pw   = config.get("naoko", "pass")
         self.hmod_admin = config.get("naoko", "hmod_admin").lower()
