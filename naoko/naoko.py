@@ -1090,7 +1090,6 @@ class Naoko(object):
             self.asLeader(setskip, False)
         else:
             if self.leader_queue:
-                print "HEEYAH"
                 def fn():
                     return
                 self.asLeader(fn)
@@ -1880,7 +1879,6 @@ class Naoko(object):
     # Also updates the duration if necessary to prevent certain types of annoying attacks on the room.
     def _checkVideo(self, vi):
         data = self.apiclient.getVideoInfo(vi.site, vi.vid)
-        print data
         if data:
             if data != "Unknown":
                 title, dur, embed = data
