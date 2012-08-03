@@ -870,7 +870,10 @@ class Naoko(object):
     def playlist(self, tag, data):
         self.clear(tag, None)
         for v in data:
-            self._addVideo(v, False)
+            self._addVideo(v, False, False)
+
+        # TEMPORARY
+        self.magic()
 
     def clear(self, tag, data):
         self.vidLock.acquire()
@@ -1094,9 +1097,6 @@ class Naoko(object):
                     return
                 self.asLeader(fn)
             self.setSkip("", self.getUserByNick(self.name), self.autoSkip)
-
-        # TEMPORARY
-        self.magic()
 
     def storeUserCount(self, tag=None, data=None):
         count = len(self.userlist)
@@ -1897,7 +1897,7 @@ class Naoko(object):
     # Validates a video before inserting it into the database.
     # Will correct invalid durations and titles for Youtube videos.
     # This makes SQL inserts dependent on the external API.
-    def _validateAddVideo(self, v, sql=True):
+    def _validateAddVideo(self, v, sql=True, echo=True):
         vi = v.vidinfo
         dur = vi.dur
         title = vi.title
@@ -1919,7 +1919,8 @@ class Naoko(object):
             # The video is invalid don't insert it.
             self.logger.debug("Invalid video, skipping SQL insert.")
             # Go even further and remove it from the playlist completely
-            self.enqueueMsg("Invalid video removed.")
+            if echo:
+                self.enqueueMsg("Invalid video removed.")
             self.stExecute(package(self.asLeader, package(self.send, "rm", v.v_sid)))
             return
         if valid == "Unknown": return
@@ -1984,7 +1985,7 @@ class Naoko(object):
             self.send("am", [v[0], v[1], self.filterString(v[2])[1],"http://i.ytimg.com/vi/%s/default.jpg" % (v[1]), v[3]/1000.0])
 
     # Add the video described by v
-    def _addVideo(self, v, sql=True):
+    def _addVideo(self, v, sql=True, echo=True):
         if self.stthread != threading.currentThread():
             raise Exception("_addVideo should not be called outside the Synchtube thread")
         v[0] = v[0][:len(SynchtubeVidInfo._fields)]
@@ -2015,7 +2016,7 @@ class Naoko(object):
             self.asLeader(package(self._bump, list([vid.v_sid])))
             return
         
-        self.api_queue.append(package(self._validateAddVideo, vid, sql))
+        self.api_queue.append(package(self._validateAddVideo, vid, sql, echo))
         self.apiAction.set()
 
     def _removeVideo(self, v):
