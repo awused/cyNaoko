@@ -691,19 +691,33 @@ class Naoko(object):
 
     def nextVideo(self):
         self.vidLock.acquire()
-        videoIndex = self.getVideoIndexById(self.state.current)
-        if videoIndex == None:
-            videoIndex = -1
-        if not self.vidlist:
-            self.sendChat("Video list is empty, restarting.")
-            self.close()
-        videoIndex = (videoIndex + 1) % len(self.vidlist)
-        self.logger.debug("Advancing to next video [%s]", self.vidlist[videoIndex])
-        self.state.time = int(round(time.time() * 1000))
-        self.send("s", [2])
-        self.send("pm", self.vidlist[videoIndex].v_sid)
-        self.enqueueMsg("Playing: %s" % (self.filterString(self.vidlist[videoIndex].vidinfo.title)[1]))
-        self.vidLock.release()
+        try:
+            videoIndex = self.getVideoIndexById(self.state.current)
+            if videoIndex == None:
+                videoIndex = -1
+            if not self.vidlist:
+                self.logger.debug("Empty list, playing default video.")
+                # Hardcoded video.
+                self.send("cm", ["yt", "hGqyJmlJ-MY", u"\u304a\u3061\u3083\u3081\u6a5f\u80fd\u3092\u9ed2\u5b50\u3063\u307d\u304f\u6b4c\u3063\u3066\u307f\u305f" ,"http://i.ytimg.com/vi/hGqyJmlJ-MY/default.jpg", 92])
+                self.sql_queue.append(package(self.addRandom, "addrandom", self.getUserByNick(self.name), ""))
+                self.sqlAction.set()
+
+            # TEMPORARY
+            elif len(self.vidlist) == 1:
+                self.send("cm", ["yt", "hGqyJmlJ-MY", u"\u304a\u3061\u3083\u3081\u6a5f\u80fd\u3092\u9ed2\u5b50\u3063\u307d\u304f\u6b4c\u3063\u3066\u307f\u305f" ,"http://i.ytimg.com/vi/hGqyJmlJ-MY/default.jpg", 92])
+                self.sql_queue.append(package(self.addRandom, "addrandom", self.getUserByNick(self.name), ""))
+                self.sqlAction.set()
+            else: 
+                videoIndex = (videoIndex + 1) % len(self.vidlist)
+                self.logger.debug("Advancing to next video [%s]", self.vidlist[videoIndex])
+                self.send("s", [2])
+                self.send("pm", self.vidlist[videoIndex].v_sid)
+                self.enqueueMsg("Playing: %s" % (self.filterString(self.vidlist[videoIndex].vidinfo.title)[1]))
+           
+            self.state.time = int(round(time.time() * 1000))
+        
+        finally:
+            self.vidLock.release()
 
     def disableIRC(self, reason):
         self.irc_logger.warning(reason)
@@ -805,7 +819,8 @@ class Naoko(object):
             self.invalidVideo("Invalid video ID.")
             return
          
-        self.api_queue.append(package(self._checkVideo, vidinfo))
+        # appendleft so it doesn't wait for the entire playlist to be checked
+        self.api_queue.appendleft(package(self._checkVideo, vidinfo))
         self.apiAction.set()
 
     # Skips the current invalid video if she is leading.
@@ -852,33 +867,18 @@ class Naoko(object):
             after = data["after"]
         self._moveVideo(data["id"], after)
 
-    def changeMedia(self, tag, data):
-        self.logger.info("Change media: %s" % (data))
-        self.state.current = data[0]
-        # Prevent her from skipping something she does not recognize, like a livestream.
-        # HOWEVER, this will require a mod to tell her to skip before DEFAULT_WAIT seconds.
-        self.state.dur = DEFAULT_WAIT
-        v = data[1]
-        if len(v) < len(SynchtubeVidInfo._fields):
-            v.extend([None] * (len(SynchtubeVidInfo._fields) - len(v))) # If an unregistered adds a video there is no name included
-        v = v[:len(SynchtubeVidInfo._fields)]
-        v[2] = self.filterString(v[2])[1]
-        vi = SynchtubeVidInfo(*v)
-        self.checkVideo(vi)
-        self.changeState(tag, data[2])
-
     def playlist(self, tag, data):
         self.clear(tag, None)
         for v in data:
             self._addVideo(v, False, False)
 
-        # TEMPORARY
-        self.magic()
-
     def clear(self, tag, data):
         self.vidLock.acquire()
         self.vidlist = []
         self.vidLock.release()
+
+        # TEMPORARY
+        self.magic()
 
     def shuffle(self, tag, data):
         self._shuffle(data)
@@ -911,16 +911,10 @@ class Naoko(object):
         self.playerAction.set()
 
     def play(self, tag, data):
-        if self.leading.isSet() or self.deferredToss & self.DEFERRED_MASKS["SKIP"]:
-            if len (self.vidlist) > 1 and (not self.state.current == None) and (not self.getVideoIndexById(self.state.current) == None):
-                self.send("rm", self.state.current)
-            self.send("s", [1,0])
-            if self.deferredToss & self.DEFERRED_MASKS["SKIP"]:
-                self.deferredToss &= ~self.DEFERRED_MASKS["SKIP"]
-                if not self.deferredToss:
-                    self.tossLeader()
-            
+        self._play()    
+    
         self.state.current = data[1]
+        self.state.reason = None
         index = self.getVideoIndexById(self.state.current)
         if index == None:
             self.sendChat("Unexpected video, restarting.")
@@ -931,6 +925,34 @@ class Naoko(object):
         self.changeState(tag, data[2])
         self.logger.debug("Playing %s %s", tag, data)
 
+    def changeMedia(self, tag, data):
+        self._play()
+
+        self.logger.info("Change media: %s" % (data))
+        self.state.current = data[0]
+        self.state.reason = None
+        # Prevent her from skipping something she does not recognize, like a livestream.
+        # HOWEVER, this will require a mod to tell her to skip before DEFAULT_WAIT seconds.
+        self.state.dur = DEFAULT_WAIT
+        v = data[1]
+        if len(v) < len(SynchtubeVidInfo._fields):
+            v.extend([None] * (len(SynchtubeVidInfo._fields) - len(v))) # If an unregistered adds a video there is no name included
+        v = v[:len(SynchtubeVidInfo._fields)]
+        v[2] = self.filterString(v[2])[1]
+        vi = SynchtubeVidInfo(*v)
+        self.checkVideo(vi)
+        self.changeState(tag, data[2])
+
+    def _play(self):
+        if self.leading.isSet() or self.deferredToss & self.DEFERRED_MASKS["SKIP"]:
+            if len (self.vidlist) > 1 and (not self.state.current == None) and (not self.getVideoIndexById(self.state.current) == None):
+                self.send("rm", self.state.current)
+            self.send("s", [1,0])
+            if self.deferredToss & self.DEFERRED_MASKS["SKIP"]:
+                self.deferredToss &= ~self.DEFERRED_MASKS["SKIP"]
+                if not self.deferredToss:
+                    self.tossLeader()
+        
     def ignore(self, tag, data):
         self.logger.debug("Ignoring %s, %s", tag, data)
 
@@ -1043,7 +1065,7 @@ class Naoko(object):
         msg = data[1]
         self.chat_logger.info("%s: %r" , user.nick, msg)
 
-        self.sql_queue.append(package(self.dbclient.insertChat, msg=msg, username=user.nick, 
+        self.sql_queue.append(package(self.insertChat, msg=msg, username=user.nick, 
                     userid=user.uid, timestamp=None, protocol='ST', channel=self.room, flags=None))
         self.sqlAction.set()
 
@@ -1069,6 +1091,10 @@ class Naoko(object):
                 reason = "%s sent a blacklisted message" % (user.nick)
                 self.chatKick(user, reason)
     
+    # Wrapper for dbclient.insertChat
+    def insertChat(self, *args, **kwargs):
+        self.dbclient.insertChat(*args, **kwargs)
+
     def leader(self, tag, data):
         self.leader_sid = data
         self.tossing = False
@@ -1994,6 +2020,8 @@ class Naoko(object):
         # Synchtube will sometimes send durations as strings.
         try:
             v[0][4] = int(v[0][4])
+            if v[0][4] < 0:
+                v[0][4] = 60
         except (ValueError, TypeError) as e:
             # Something invalid, set a default duration of one minute.
             v[0][4] = 60
