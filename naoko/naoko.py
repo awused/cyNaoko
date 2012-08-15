@@ -122,7 +122,8 @@ class Naoko(object):
         "AUTOSKIP"      : ((1 << 16), 'V'), # V - Autosetskip.
         "POLL"          : ((1 << 17), 'P'), # P - Start and end polls.
         "SHUFFLE"       : ((1 << 18), 'F'), # F - Shuffle.
-        "UNREGSPAMBAN"  : ((1 << 19), 'I')} # I - Change whether unregistered users are banned for spamming or have multiple chances.
+        "UNREGSPAMBAN"  : ((1 << 19), 'I'), # I - Change whether unregistered users are banned for spamming or have multiple chances.
+        "ADD"           : ((1 << 20), 'H')} # H - Add when the list is locked.
 
     # Bitmasks for deferred tosses
     DEFERRED_MASKS = {
@@ -1456,7 +1457,12 @@ class Naoko(object):
         self.sqlAction.set()
 
     def add(self, command, user, data):
-        if not user.uid: return
+        if self.room_info["lock?"]:
+            if not (user.mod or self.hasPermission(user, "ADD")):
+                return
+        nick = user.nick
+        if not user.uid:
+            nick = ""
         site = False
         vid = False
         if data.lower().find("youtube") != -1:
@@ -1464,11 +1470,17 @@ class Naoko(object):
             if x != -1:
                 site = "yt"
                 vid = data[x + 2:x + 13]
+        if data.lower().find("youtu.be") != -1:
+            x = data.find("be/")
+            if x != -1:
+                site = "yt"
+                vid = data[x + 3:x + 14]
+                
         if site and self._checkVideoId(site, vid):
-            self.api_queue.append(package(self._add, site, vid))
+            self.api_queue.append(package(self._add, site, vid, nick))
             self.apiAction.set()
 
-    def _add(self, site, vid):
+    def _add(self, site, vid, nick):
         data = self.apiclient.getVideoInfo(site, vid)
         if not data or data == "Unknown":
             return
@@ -1477,6 +1489,8 @@ class Naoko(object):
         if valid:
             self.logger.debug("Adding video %s %s %s %s", title, site, vid, dur)
             self.stExecute(package(self.asLeader, package(self.send, "am", [site, vid, self.filterString(title)[1], "http://i.ytimg.com/vi/%s/default.jpg" % (vid), dur])))
+            self.sql_queue.append(package(self._sqlInsertVideo, site, vid, title, dur, nick))
+            self.sqlAction.set()
         
     def lock(self, command, user, data):
         if not (user.mod or self.hasPermission(user, "LOCK")): return
@@ -1812,7 +1826,7 @@ class Naoko(object):
     # Used to sanitize nicks or video titles for printing
     # Returns a boolean describing whether invalid characters were found
     # As well as the filtered string
-    def filterString(self, input, isNick=False):
+    def filterString(self, input, isNick=False, replace=True):
         if input == None: return (False, "")
         output = []
         value = input
@@ -1823,6 +1837,7 @@ class Naoko(object):
                 value = value.decode('utf-8')
             except UnicodeDecodeError:
                 value = value.decode('iso-8859-15')
+        valid = True
         for c in value:
             o = ord(c)
             # Locale independent ascii alphanumeric check
@@ -1832,7 +1847,11 @@ class Naoko(object):
             valid = o > 31 and o != 127 and not (o >= 0xd800 and o <= 0xdfff) and o <= 0xffff
             if (not isNick) and valid:
                 output.append(c)
-        return (len(output) == len(value) and len , "".join(output))
+                continue
+            valid = False
+            if replace:
+                output.append(unichr(0xfffd))
+        return (valid, "".join(output))
 
     # The following private API methods are fairly low level and work with
     # synchtube sid's (session ids) or raw data arrays. They will usually
@@ -1957,15 +1976,14 @@ class Naoko(object):
         if sql:
             # The insert the video using the retrieved title and duration.
             # Trust the external APIs over the Synchtube playlist.
-            self.sql_queue.append(package(self._sqlInsertVideo, v, title, dur))
+            self.sql_queue.append(package(self._sqlInsertVideo, vi.site, vi.vid, title, dur, v.nick))
             self.sqlAction.set()
 
-    def _sqlInsertVideo(self, v, title, dur):
-        vi = v.vidinfo
-        self.db_logger.debug("Inserting %s into videos", (vi.site, vi.vid, int(dur * 1000), title))
-        self.db_logger.debug("Inserting %s into video_stats", (vi.site, vi.vid, v.nick))
-        self.dbclient.executeDML("INSERT OR IGNORE INTO videos VALUES(?, ?, ?, ?)", (vi.site, vi.vid, int(dur * 1000), title))
-        self.dbclient.executeDML("INSERT INTO video_stats VALUES(?, ?, ?)", (vi.site, vi.vid, v.nick))
+    def _sqlInsertVideo(self, site, vid, title, dur, nick):
+        self.db_logger.debug("Inserting %s into videos", (site, vid, int(dur * 1000), title))
+        self.db_logger.debug("Inserting %s into video_stats", (site, vid, nick))
+        self.dbclient.executeDML("INSERT OR IGNORE INTO videos VALUES(?, ?, ?, ?)", (site, vid, int(dur * 1000), title))
+        self.dbclient.executeDML("INSERT INTO video_stats VALUES(?, ?, ?)", (site, vid, nick))
         self.dbclient.commit()
     
     def _sqlInsertUserCount(self, timestamp, count):
@@ -2044,7 +2062,7 @@ class Naoko(object):
             self.asLeader(package(self._bump, list([vid.v_sid])))
             return
         
-        self.api_queue.append(package(self._validateAddVideo, vid, sql, echo))
+        self.api_queue.append(package(self._validateAddVideo, vid, sql, echo and not v[3] == self.name))
         self.apiAction.set()
 
     def _removeVideo(self, v):

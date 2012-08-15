@@ -10,6 +10,11 @@ These commands are usable by all users, whether they're in IRC or Synchtube.
 8ball question
     Responds with one of the standard magic eight ball responses to the given question.
 
+add link
+    Adds the video found at the link to the playlist. The video is added to the sql database as if it were added through Synchtube.
+    Only mods can add videos when the playlist is locked.
+    Currently only supports youtube links.
+
 ask question
     Responds yes or no to the given question.
 
@@ -68,6 +73,10 @@ permissions
 These commands are only available to Synchtube mods in Synchtube chat. Some commands are available to hybrid mods with specific permissions.
 There are no differences between mods and hybrid mods, save only that hybrid mods are not protected from some commands such as ban like real mods are, and they cannot use the
 special parameters for the kick command.
+
+add link
+    Hybrid mod permissions +H.
+    Allows users to add videos while the list is locked.
 
 addrandom [Y | -title "X" | -dur (hours: | hours:minutes | :minutes | minutes) | -user name]
     Hybrid mod permission +A.
@@ -214,6 +223,7 @@ D - Delete
 E - Setskip
 F - Shuffle
 G - Purge
+H - Add
 I - Unregspamban
 K - Kick
 L - Lock, Unlock

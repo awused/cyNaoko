@@ -2,6 +2,7 @@
 
 ## Requirements
 - Naoko was developed using Python 2.7.2
+- Naoko requires a registered Synchtube account, and most functionality does not work properly without being a moderator.
 - Due to a bug in OpenSSL 1.0.1 and its interface with Python 2.7.2 some functionality on Linux requires curl to be installed.
     Without curl installed Naoko will be unable to verify Dailymotion videos or properly handle removed videos or videos with embedding disabled.
     She will wait DEFAULT_WAIT, which is set to 3 hours, if a leader changes to a Dailymotion video bypassing the playlist, so curl is strongly recommended.
