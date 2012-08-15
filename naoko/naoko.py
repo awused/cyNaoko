@@ -104,7 +104,7 @@ class Naoko(object):
 
     # Bitmasks for hybrid mods.
     MASKS = {
-        "LEAD"          : (1, 'O'),         # O - Both the steal and mod command.
+        "LEAD"          : (1, 'O'),         # O - Both the steal, lead, and mod commands.
         "BUMP"          : ((1 << 1), 'B'),  # B - Bumping videos.
         "DELETE"        : ((1 << 2), 'D'),  # D - Deleting videos.
         "KICK"          : ((1 << 3), 'K'),  # K - Kicking users.
@@ -603,6 +603,7 @@ class Naoko(object):
     def _initCommandHandlers(self):
         self.commandHandlers = {"restart"           : self.restart,
                                 "steal"             : self.steal,
+                                "lead"              : self.lead,
                                 "mod"               : self.makeLeader,
                                 "mute"              : self.mute,
                                 "unmute"            : self.unmute,
@@ -1245,9 +1246,13 @@ class Naoko(object):
     def steal(self, command, user, data):
         if not (user.mod or self.hasPermission(user, "LEAD")): return
         self.changeLeader(user.sid)
+    
+    def lead(self, command, user, data):
+        if not (user.mod or user.sid == self.leader_sid or self.hasPermission(user, "LEAD")): return
+        self.changeLeader(self.sid)
 
     def makeLeader(self, command, user, data):
-        if not (user.mod or self.hasPermission(user, "LEAD")): return
+        if not (user.mod or user.sid == self.leader_sid or self.hasPermission(user, "LEAD")): return
         args = data.split(' ', 1)
         target = self.getUserByNick(args[0])
         self.logger.info("Requested mod change to %s by %s", target, user)

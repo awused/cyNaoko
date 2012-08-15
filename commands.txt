@@ -151,6 +151,11 @@ lastban [name | -all]
 lastbans [(name | -all) [X]]
     Displays the last X bans, where X defaults to 1, of any users with the given name. If -all is provided instead of a name the last X bans for any users will b displayed.
 
+lead
+    Hybrid mod permission +O.
+    Can be used by the current leader of the room regardless of permissions.
+    Changes the leader to Naoko.
+
 lock
 unlock
     Hybrid mod permission +L.
@@ -158,6 +163,7 @@ unlock
 
 mod name
     Hybrid mod permission +O.
+    Can be used by the current leader of the room regardless of permissions.
     Changes the leader to the user with the given name.
 
 mute
