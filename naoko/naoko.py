@@ -644,22 +644,24 @@ class Naoko(object):
                                 "endpoll"           : self.endPoll,
                                 "shuffle"           : self.shuffleList,
                                 "unregspamban"      : self.setUnregSpamBan,
-                                "add"               : self.add}
+                                "add"               : self.add,
+                                "quote"             : self.quote}
 
     def _initIRCCommandHandlers(self):
-        self.ircCommandHandlers = {"status"            : self.status,
-                                   "choose"            : self.choose,
-                                   "permute"           : self.permute,
-                                   "ask"               : self.ask,
-                                   "8ball"             : self.eightBall,
-                                   "steak"             : self.steak,
-                                   "d"                 : self.dice,
-                                   "dice"              : self.dice,
-                                   "cleverbot"         : self.cleverbot,
-                                   "translate"         : self.translate,
-                                   "wolfram"           : self.wolfram,
-                                   "eval"              : self.eval,
-                                   "help"              : self.help}
+        self.ircCommandHandlers = {"status"             : self.status,
+                                   "choose"             : self.choose,
+                                   "permute"            : self.permute,
+                                   "ask"                : self.ask,
+                                   "8ball"              : self.eightBall,
+                                   "steak"              : self.steak,
+                                   "d"                  : self.dice,
+                                   "dice"               : self.dice,
+                                   "cleverbot"          : self.cleverbot,
+                                   "translate"          : self.translate,
+                                   "wolfram"            : self.wolfram,
+                                   "eval"               : self.eval,
+                                   "help"               : self.help,
+                                   "quote"              : self.quote}
 
     # Handle chat commands from both IRC and Synchtube
     def chatCommand(self, user, msg, irc=False):
@@ -1605,6 +1607,18 @@ class Naoko(object):
     def eightBall(self, command, user, data):
         if not data: return
         self.enqueueMsg("[8ball: %s] %s" % (data, random.choice(eight_choices)))
+
+    def quote(self, command, user, data):
+        self.sql_queue.append(package(self._quote, data))
+        self.sqlAction.set()
+    
+    def _quote(self, name):
+        if not name:
+            rows = self.dbclient.fetch("SELECT username, msg FROM chat WHERE protocol = 'ST' and username != ? ORDER BY RANDOM() LIMIT 1", (self.name,))
+        else:
+            rows = self.dbclient.fetch("SELECT username, msg FROM chat WHERE protocol = 'ST' and username = ? COLLATE NOCASE ORDER BY RANDOM() LIMIT 1", (name,))
+        if rows:
+            self.enqueueMsg("[Quote  %s: %s" % (rows[0][0], rows[0][1])) 
 
     # Kick a single user by their name.
     # Two special arguments -unnamed and -unregistered.

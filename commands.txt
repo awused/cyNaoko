@@ -36,6 +36,10 @@ help
 permute choice [choice ...]
     Responds with a permutation of the given choices.
 
+quote [name]
+    Displays a random quote. If a name is provided it will pick a quote from users with that name.
+    Will not display quotes from Naoko unless specifically asked.
+
 status
     Displays whether Naoko is muted or not. This is displayed even if she is muted.
 
