@@ -379,7 +379,7 @@ class Naoko(object):
         while not self.closing.isSet():
             frame = deque(client.recvMessage().split('\n'))
             while len(frame) > 0:
-                data = self.filterString(frame.popleft())[1]
+                data = self.filterString(frame.popleft().strip())[1]
                 if data.find("PING :") != -1:
                     client.ping()
                 elif data.find("PRIVMSG " + self.channel + " :") != -1:
@@ -1472,22 +1472,42 @@ class Naoko(object):
             nick = ""
         site = False
         vid = False
-        if data.lower().find("youtube") != -1:
+        if data.find("youtube") != -1:
             x = data.find("v=")
             if x != -1:
                 site = "yt"
                 vid = data[x + 2:x + 13]
-        if data.lower().find("youtu.be") != -1:
+        elif data.find("youtu.be") != -1:
             x = data.find("be/")
             if x != -1:
                 site = "yt"
                 vid = data[x + 3:x + 14]
-                
-        if site and self._checkVideoId(site, vid):
-            self.api_queue.append(package(self._add, site, vid, nick))
+        elif data.find("vimeo") != -1:
+            x = data.find(".com/")
+            if x != -1:
+                site = "vm"
+                vid = data[x+5:x+13]
+        elif data.find("dailymotion") != -1:
+            x = data.find("video/")
+            if x != -1:
+                site = "dm"
+                vid = data[x+6:x+12]
+        elif data.find("blip.tv") != -1:
+            site = "bt"
+            vid = data[-7:]
+        elif data.find("soundcloud") != -1:
+            # Soundcloud URLs do not contain ids so additional steps are required.
+            site = "sc"
+            vid = data
+
+        if site and (site == "sc" or self._checkVideoId(site, vid)):
+            self.api_queue.appendleft(package(self._add, site, vid, nick))
             self.apiAction.set()
 
     def _add(self, site, vid, nick):
+        if site == "sc":
+            vid = self.apiclient.resolveSoundcloud(vid)
+            if not vid: return
         data = self.apiclient.getVideoInfo(site, vid)
         if not data or data == "Unknown":
             return
@@ -1618,7 +1638,7 @@ class Naoko(object):
         else:
             rows = self.dbclient.fetch("SELECT username, msg FROM chat WHERE protocol = 'ST' and username = ? COLLATE NOCASE ORDER BY RANDOM() LIMIT 1", (name,))
         if rows:
-            self.enqueueMsg("[Quote  %s: %s" % (rows[0][0], rows[0][1])) 
+            self.enqueueMsg("[Quote  %s] %s" % (rows[0][0], rows[0][1])) 
 
     # Kick a single user by their name.
     # Two special arguments -unnamed and -unregistered.

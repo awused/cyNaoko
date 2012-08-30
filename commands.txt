@@ -10,11 +10,6 @@ These commands are usable by all users, whether they're in IRC or Synchtube.
 8ball question
     Responds with one of the standard magic eight ball responses to the given question.
 
-add link
-    Adds the video found at the link to the playlist. The video is added to the sql database as if it were added through Synchtube.
-    Only mods can add videos when the playlist is locked.
-    Currently only supports youtube links.
-
 ask question
     Responds yes or no to the given question.
 
@@ -38,7 +33,7 @@ permute choice [choice ...]
 
 quote [name]
     Displays a random quote. If a name is provided it will pick a quote from users with that name.
-    Will not display quotes from Naoko unless specifically asked.
+    Will not display quotes from Naoko unless specifically asked to.
 
 status
     Displays whether Naoko is muted or not. This is displayed even if she is muted.
@@ -53,6 +48,10 @@ wolfram query
 
 --- Synchtube Users Only ---
 These commands are usable by both mods and non-mods in the Synchtube chat, but not in IRC.
+
+add link
+    Adds the video found at the link to the playlist. The video is added to the sql database as if it were added through Synchtube.
+    Only mods can add videos when the playlist is locked.
 
 addrandom X
     Adds X random videos to the list, where X defaults to five. The maximum value of X for non-mods is five. Non-mods can only use this command when there are ten or less videos in the playlist.

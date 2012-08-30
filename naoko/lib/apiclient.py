@@ -4,7 +4,7 @@ import json
 import logging
 import subprocess
 from ssl import SSLError
-from urllib import urlencode
+from urllib import urlencode, urlopen
 from httplib import HTTPConnection, HTTPSConnection
 
 from settings import *
@@ -119,6 +119,45 @@ class APIClient(object):
             data = con.getresponse().read().decode("utf-8")
         except Exception as e:
             self.logger.warning("Failed to retrieve a valid response from the Wolfram Alpha API.")
+            self.logger.debug(e)
+        finally:
+            con.close()
+            return data
+
+    # Resolve a Soundcloud URL into usable track information.
+    # Soundcloud is the only site that does not include the ids in their URLs.
+    def resolveSoundcloud(self, url):
+        self.logger.debug("Resolving URL using the Soundcloud API.")
+        data = self._resolveSoundcloudAPI( url)
+        if isinstance(data, dict) and not "errors" in data:
+            if "location" in data:
+                return self._getSoundcloudID(data["location"])
+        return False
+
+    def _getSoundcloudID(self, url):
+        data = None
+        try:
+            resp = json.loads(urlopen(url).read())
+            if resp["kind"] == "track":
+                data = resp["id"]
+        except Exception as e:
+            # Many things can go wrong with an HTTP request or during JSON parsing
+            self.logger.warning("Error retrieving Soundcloud API information.")
+            self.logger.debug(e)
+        finally:
+            return data
+
+    def _resolveSoundcloudAPI(self, url):
+        con = HTTPSConnection("api.soundcloud.com", timeout=10)
+        params = {"client_id" : self.keys.sc_id,
+                  "url"       : url}
+        data = None
+        try:
+            con.request("GET", "/resolve.json?%s" % (urlencode(params)))
+            data = json.loads(con.getresponse().read())
+        except Exception as e:
+            # Many things can go wrong with an HTTP request or during JSON parsing
+            self.logger.warning("Error retrieving Soundcloud API information.")
             self.logger.debug(e)
         finally:
             con.close()
