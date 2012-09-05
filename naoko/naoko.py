@@ -1634,9 +1634,9 @@ class Naoko(object):
     
     def _quote(self, name):
         if not name:
-            rows = self.dbclient.fetch("SELECT username, msg FROM chat WHERE protocol = 'ST' and username != ? ORDER BY RANDOM() LIMIT 1", (self.name,))
+            rows = self.dbclient.fetch("SELECT username, msg FROM chat WHERE protocol = 'ST' AND username != ? AND msg NOT LIKE '/me%%' AND msg NOT LIKE '$%%' ORDER BY RANDOM() LIMIT 1", (self.name,))
         else:
-            rows = self.dbclient.fetch("SELECT username, msg FROM chat WHERE protocol = 'ST' and username = ? COLLATE NOCASE ORDER BY RANDOM() LIMIT 1", (name,))
+            rows = self.dbclient.fetch("SELECT username, msg FROM chat WHERE protocol = 'ST' AND username = ? COLLATE NOCASE AND msg NOT LIKE '/me%%' AND msg NOT LIKE '$%%' ORDER BY RANDOM() LIMIT 1", (name,))
         if rows:
             self.enqueueMsg("[Quote  %s] %s" % (rows[0][0], rows[0][1])) 
 
