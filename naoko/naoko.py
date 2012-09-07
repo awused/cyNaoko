@@ -703,13 +703,13 @@ class Naoko(object):
                 self.logger.debug("Empty list, playing default video.")
                 # Hardcoded video.
                 self.send("cm", ["yt", "hGqyJmlJ-MY", u"\u304a\u3061\u3083\u3081\u6a5f\u80fd\u3092\u9ed2\u5b50\u3063\u307d\u304f\u6b4c\u3063\u3066\u307f\u305f" ,"http://i.ytimg.com/vi/hGqyJmlJ-MY/default.jpg", 92])
-                self.sql_queue.append(package(self.addRandom, "addrandom", self.getUserByNick(self.name), ""))
+                self.sql_queue.append(package(self.addRandom, "addrandom", self.selfUser, ""))
                 self.sqlAction.set()
 
             # TEMPORARY
             elif len(self.vidlist) == 1:
                 self.send("cm", ["yt", "hGqyJmlJ-MY", u"\u304a\u3061\u3083\u3081\u6a5f\u80fd\u3092\u9ed2\u5b50\u3063\u307d\u304f\u6b4c\u3063\u3066\u307f\u305f" ,"http://i.ytimg.com/vi/hGqyJmlJ-MY/default.jpg", 92])
-                self.sql_queue.append(package(self.addRandom, "addrandom", self.getUserByNick(self.name), ""))
+                self.sql_queue.append(package(self.addRandom, "addrandom", self.selfUser, ""))
                 self.sqlAction.set()
             else: 
                 videoIndex = (videoIndex + 1) % len(self.vidlist)
@@ -971,6 +971,9 @@ class Naoko(object):
             return
 
         user = self.userlist[sid]
+        if sid == self.sid:
+            self.selfUser = user
+
         if user.mod or user.sid == self.sid: return
        
         if user.nickChanges > 5 or (user.nickChanges > 0 and not nick == oldnick):
@@ -987,12 +990,12 @@ class Naoko(object):
         else:
             self.userlist[sid] = user._replace(nickChanges=user.nickChanges+1)
 
-    def addUser(self, tag, data):
+    def addUser(self, tag, data, isSelf=False):
         # add_user and users data are similar aside from users having
         # a name field at idx 1
         userinfo = data[:]
         userinfo.insert(1, 'unnamed')
-        self._addUser(userinfo)
+        self._addUser(userinfo, isSelf)
         self.storeUserCount()
 
     def remUser(self, tag, data):
@@ -1009,7 +1012,7 @@ class Naoko(object):
             self._addUser(u)
 
     def selfInfo(self, tag, data):
-        self.addUser(tag, data)
+        self.addUser(tag, data, isSelf=True)
         self.sid = data[0]
         if not self.pw:
             self.send("nick", self.name)
@@ -1119,14 +1122,14 @@ class Naoko(object):
 
         if self.autoLead and self.vidlist:
             def setskip():
-                self.setSkip("", self.getUserByNick(self.name), self.autoSkip)
+                self.setSkip("", self.selfUser, self.autoSkip)
             self.asLeader(setskip, False)
         else:
             if self.leader_queue:
                 def fn():
                     return
                 self.asLeader(fn)
-            self.setSkip("", self.getUserByNick(self.name), self.autoSkip)
+            self.setSkip("", self.selfUser, self.autoSkip)
 
     def storeUserCount(self, tag=None, data=None):
         count = len(self.userlist)
@@ -1504,6 +1507,7 @@ class Naoko(object):
             self.api_queue.appendleft(package(self._add, site, vid, nick))
             self.apiAction.set()
 
+    # Add an individual video after verifying it
     def _add(self, site, vid, nick):
         if site == "sc":
             vid = self.apiclient.resolveSoundcloud(vid)
@@ -1518,7 +1522,28 @@ class Naoko(object):
             self.stExecute(package(self.asLeader, package(self.send, "am", [site, vid, self.filterString(title)[1], "http://i.ytimg.com/vi/%s/default.jpg" % (vid), dur])))
             self.sql_queue.append(package(self._sqlInsertVideo, site, vid, title, dur, nick))
             self.sqlAction.set()
-        
+    
+    # Imports all the videos in <filename>.lst
+    # An lst file is simply a plain text file containing a list of videos, one per line.
+    def importFile(self, name, filename):
+        name = self.filterString(name, True, False)[1]
+        f = False
+        try:
+            f = file("%s.lst" % (filename), "r")
+            user = SynchtubeUser(*self.selfUser)
+            user = user._replace(nick=name)
+            for line in f:
+                self.add("add", user, line)
+                # Sleep between adds, otherwise the Youtube API could throttle her, resulting in unpredictable behaviour.
+                # This sleep results in the adds taking a very long time for long lists, which can be very annoying, use this function sparingly.
+                time.sleep(0.5)
+        except Exception as e:
+            print e
+            return
+        finally:
+            if f != False:
+                f.close()
+
     def lock(self, command, user, data):
         if not (user.mod or self.hasPermission(user, "LOCK")): return
         if self.room_info["lock?"] == (command == "lock"): return
@@ -1901,7 +1926,7 @@ class Naoko(object):
     # u_arr should be in the following format:
     # [<sid>, <nick>, <uid>, <authenticated>, <avatar-type>, <leader>, <moderator>, <karma>]
     # This is the format used by user arrays from the synchtube "users" message
-    def _addUser(self, u_arr):
+    def _addUser(self, u_arr, isSelf=False):
         userinfo = itertools.izip_longest(SynchtubeUser._fields, u_arr)
         userinfo = dict(userinfo)
         userinfo['nick'] = self.filterString(userinfo['nick'], True)[1]
@@ -1909,6 +1934,8 @@ class Naoko(object):
         userinfo['nickChanges'] = 0
         user = SynchtubeUser(**userinfo)
         self.userlist[user.sid] = user
+        if isSelf:
+            self.selfUser = user
         # TEMPORARY
         if not user.uid and False:
             self.room_info["tv?"] = False
@@ -2138,6 +2165,7 @@ class Naoko(object):
 
     # Kick user using their sid(session id)
     def _kickUser(self, sid, reason="Requested", sendMessage=True):
+        if not sid in self.userlist: return
         if sendMessage:
             self.enqueueMsg("Kicked %s: (%s)" % (self.userlist[sid].nick, reason))
         self.send("kick", [sid, reason])
@@ -2145,6 +2173,7 @@ class Naoko(object):
     # By default none of the functions use this.
     # Don't come crying to me if the bot bans the entire channel
     def _banUser(self, sid, reason="Requested", sendMessage=True, modName=None):
+        if not sid in self.userlist: return
         if not modName:
             modName = self.name
         if sendMessage:

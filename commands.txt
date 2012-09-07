@@ -245,3 +245,12 @@ S - Skip
 T - Duplicates
 U - Autolead
 V - Autosetskip
+
+--- Naoko Administrator Only ---
+These functions are only available to the administrator of Naoko through telnet.
+
+importFile(string name, string filename)
+    Opens <filename>.lst, which is a text file containing a list of urls to vidoes (such as are accepted by $add), one per line.
+    Adds every video after verifying it as if it were added by a user with the provided name.
+    This function can take a long time due to spacing out the adds to avoid spamming the Youtube API, and should be used sparingly.
+
