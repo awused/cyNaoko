@@ -511,11 +511,8 @@ class Naoko(object):
     def _sqlloop(self):
         self.db_logger = logging.getLogger("stclient.db")
         self.db_logger.setLevel(LOG_LEVEL)
-        initscript=None
-        if self.dbinit:
-            initscript=open(self.dbinit).read()
         self.db_logger.info("Starting Database Client")
-        self.dbclient = client = NaokoDB(self.dbfile, initscript)
+        self.dbclient = client = NaokoDB(self.dbfile)
         self.last_random = time.time()
         while self.sqlAction.wait():
             if self.closing.isSet(): break
@@ -944,9 +941,12 @@ class Naoko(object):
         v = v[:len(SynchtubeVidInfo._fields)]
         v[2] = self.filterString(v[2])[1]
         vi = SynchtubeVidInfo(*v)
-        self.checkVideo(vi)
+        # Have to assume it's a valid video if it's not from one of these sites.
+        if vi.site in ["yt", "bt", "dm", "vm", "sc"]:
+            self.checkVideo(vi)
         self.changeState(tag, data[2])
 
+    # Actions required when a video starts playing with Naoko as the leader.
     def _play(self):
         if self.leading.isSet() or self.deferredToss & self.DEFERRED_MASKS["SKIP"]:
             if len (self.vidlist) > 1 and (not self.state.current == None) and (not self.getVideoIndexById(self.state.current) == None):
@@ -1466,7 +1466,7 @@ class Naoko(object):
         self.sql_queue.append(package(self._lastBans, target, num))
         self.sqlAction.set()
 
-    def add(self, command, user, data):
+    def add(self, command, user, data, store=True):
         if self.room_info["lock?"]:
             if not (user.mod or self.hasPermission(user, "ADD")):
                 return
@@ -1504,11 +1504,11 @@ class Naoko(object):
             vid = data
 
         if site and (site == "sc" or self._checkVideoId(site, vid)):
-            self.api_queue.appendleft(package(self._add, site, vid, nick))
+            self.api_queue.appendleft(package(self._add, site, vid, nick, store))
             self.apiAction.set()
 
     # Add an individual video after verifying it
-    def _add(self, site, vid, nick):
+    def _add(self, site, vid, nick, store):
         if site == "sc":
             vid = self.apiclient.resolveSoundcloud(vid)
             if not vid: return
@@ -1520,20 +1520,22 @@ class Naoko(object):
         if valid:
             self.logger.debug("Adding video %s %s %s %s", title, site, vid, dur)
             self.stExecute(package(self.asLeader, package(self.send, "am", [site, vid, self.filterString(title)[1], "http://i.ytimg.com/vi/%s/default.jpg" % (vid), dur])))
-            self.sql_queue.append(package(self._sqlInsertVideo, site, vid, title, dur, nick))
-            self.sqlAction.set()
+            if store:
+                self.sql_queue.append(package(self._sqlInsertVideo, site, vid, title, dur, nick))
+                self.sqlAction.set()
     
     # Imports all the videos in <filename>.lst
     # An lst file is simply a plain text file containing a list of videos, one per line.
-    def importFile(self, name, filename):
-        name = self.filterString(name, True, False)[1]
+    def importFile(self, filename, name=False):
+        if name:
+            name = self.filterString(name, True, False)[1]
         f = False
         try:
             f = file("%s.lst" % (filename), "r")
             user = SynchtubeUser(*self.selfUser)
             user = user._replace(nick=name)
             for line in f:
-                self.add("add", user, line)
+                self.add("add", user, line, name!=False)
                 # Sleep between adds, otherwise the Youtube API could throttle her, resulting in unpredictable behaviour.
                 # This sleep results in the adds taking a very long time for long lists, which can be very annoying, use this function sparingly.
                 time.sleep(0.5)
@@ -1986,6 +1988,19 @@ class Naoko(object):
         self.dbclient.executeDML("INSERT INTO bans VALUES(?, ?, ?, ?, ?)", (reason, auth, user.nick, int(round(time*1000)), modName))
         self.dbclient.commit()
 
+    # Marks a video with the specified flags.
+    # 1 << 0    : Invalid video, may become valid in the future. Reset upon successful manual add.
+    # 1 << 1    : Manually blacklisted video.
+    def flagVideo(self, site, vid, flags):
+        self.db_logger.debug("Flagging %s:%s with flags %s", site, vid, bin(flags))
+        self.dbclient.executeDML("UPDATE videos SET flags=(flags | ?) WHERE type = ? AND id = ?", (flags, site, vid))
+        self.dbclient.commit()
+
+    # Remove flags from a video.
+    def unflagVideo(self, site, vid, flags):
+        self.dbclient.executeDML("UPDATE videos SET flags=(flags & ?) WHERE type = ? AND id = ?", (~flags, site, vid))
+        self.dbclient.commit()
+
     # Checks to see if the current video isn't invalid, blocked, or removed.
     # Also updates the duration if necessary to prevent certain types of annoying attacks on the room.
     def _checkVideo(self, vi):
@@ -2029,6 +2044,11 @@ class Naoko(object):
         if not valid or title != vi.title:
             # The video is invalid don't insert it.
             self.logger.debug("Invalid video, skipping SQL insert.")
+            # TEMPORARY IF STATEMENT
+            if vi.vid.find("whatisthis") == -1:
+                # Flag the video as invalid.
+                self.sql_queue.append(package(self.flagVideo, vi.site, vi.vid, 1))
+                self.sqlAction.set()
             # Go even further and remove it from the playlist completely
             if echo:
                 self.enqueueMsg("Invalid video removed.")
@@ -2046,11 +2066,12 @@ class Naoko(object):
             self.sqlAction.set()
 
     def _sqlInsertVideo(self, site, vid, title, dur, nick):
-        self.db_logger.debug("Inserting %s into videos", (site, vid, int(dur * 1000), title))
+        self.db_logger.debug("Inserting %s into videos", (site, vid, int(dur * 1000), title, 0))
         self.db_logger.debug("Inserting %s into video_stats", (site, vid, nick))
-        self.dbclient.executeDML("INSERT OR IGNORE INTO videos VALUES(?, ?, ?, ?)", (site, vid, int(dur * 1000), title))
+        self.dbclient.executeDML("INSERT OR IGNORE INTO videos VALUES(?, ?, ?, ?, ?)", (site, vid, int(dur * 1000), title, 0))
         self.dbclient.executeDML("INSERT INTO video_stats VALUES(?, ?, ?)", (site, vid, nick))
         self.dbclient.commit()
+        self.unflagVideo(site, vid, 1)
     
     def _sqlInsertUserCount(self, timestamp, count):
         self.db_logger.debug("Inserting %s into user_count", (timestamp, count))
@@ -2221,7 +2242,6 @@ class Naoko(object):
         self.irc_nick = config.get("naoko", "irc_nick")
         self.ircpw = config.get("naoko", "irc_pass")
         self.dbfile = config.get("naoko", "db_file")
-        self.dbinit = config.get("naoko", "db_init")
         self.apikeys = Object()
         self.apikeys.mst_id = config.get("naoko", "mst_client_id")
         self.apikeys.mst_secret = config.get("naoko", "mst_client_secret")

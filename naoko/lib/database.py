@@ -69,30 +69,25 @@ class NaokoDB(object):
     """
 
     _dbinfo_sql = "SELECT name FROM sqlite_master WHERE type='table'"
+    _version_sql = "SELECT value FROM metadata WHERE key='dbversion'"
     _required_tables = set(["video_stats", "videos", "user_count", "bans", "chat"])
 
     # Low level database handling methods
     def __enter__(self):
         return self
 
-    def __init__(self, database, initscript):
+    def __init__(self, database):
         self.logger = logging.getLogger("database")
         self.logger.setLevel(LOG_LEVEL)
-        self.initscript = initscript
         self.db_file = database
         self.con = sqlite3.connect(database)
         self._state = "open"
 
-        def getTables():
-            with self.execute(self._dbinfo_sql) as cur:
-                return set([table[0] for table in cur.fetchall()])
 
-        #tables = set(getTables())
 
         # run self.initscript if we have an empty db (one with no tables)
-        #if len(tables) is 0:
         self.initdb()
-        tables = set(getTables())
+        tables = self._getTables()
 
         if not self._required_tables <= tables:
             raise ValueError("Database '%s' is non-empty but "
@@ -110,14 +105,46 @@ class NaokoDB(object):
         else:
             self.logger.debug("Database '%s' closed" % self.db_file)
 
+    def _getTables(self):
+        with self.execute(self._dbinfo_sql) as cur:
+            return set([table[0] for table in cur.fetchall()])
+
+    def _getVersion(self):
+        tables = self._getTables()
+        if 'metadata' in tables:
+            with self.execute(self._version_sql) as cur:
+                version = cur.fetchone()[0]
+                self.logger.debug("Database version is %s" % version)
+                return int(version)
+        elif tables : # There was no explicit version in the original database
+            self.logger.debug("Database version is 1 (no metadata table)")
+            return 1
+
+    def _update(self):
+        version = self._getVersion()
+        # The database is either empty or a version from before the metadata table
+        if version < 2:
+            stmts = ["CREATE TABLE IF NOT EXISTS videos(type TEXT, id TEXT, duration_ms INTEGER, title TEXT, primary key(type, id))",
+                "CREATE TABLE IF NOT EXISTS video_stats(type TEXT, id TEXT, uname TEXT, FOREIGN KEY(type, id) REFERENCES video(type, id))",
+                "CREATE INDEX IF NOT EXISTS video_stats_idx ON video_stats(type, id)",
+                "CREATE TABLE IF NOT EXISTS bans(reason TEXT, auth INTEGER, uname TEXT, timestamp INTEGER, mod TEXT)",
+                "CREATE TABLE IF NOT EXISTS user_count(timestamp INTEGER, count INTEGER, primary key(timestamp, count))",
+                "CREATE TABLE IF NOT EXISTS chat(timestamp INTEGER, username TEXT, userid TEXT, msg TEXT, protocol TEXT, channel TEXT, flags TEXT)",
+                "CREATE INDEX IF NOT EXISTS chat_ts ON chat(timestamp)",
+                "CREATE INDEX IF NOT EXISTS chat_user ON chat(username)",
+                "ALTER TABLE videos ADD COLUMN  flags INTEGER DEFAULT 0 NOT NULL",
+                "CREATE TABLE metadata(key TEXT, value TEXT, PRIMARY KEY(key))",
+                "INSERT INTO metadata(key, value) VALUES ('dbversion', '2')"]
+            for stmt in stmts:
+                self.executeDML(stmt)
+            
     @dbopen
     def initdb(self):
         """
         Initializes an empty sqlite3 database using .initscript.
         """
-        self.logger.debug("Running initscript\n%s" % (self.initscript))
-        with self.executescript(self.initscript):
-            self.con.commit()
+        self._update()
+        assert self._getVersion() >= 2
 
     @dbopen
     def cursor(self):
@@ -187,7 +214,7 @@ class NaokoDB(object):
 
 
     # Higher level video/poll/chat-related APIs
-    def getVideos(self, num=None, columns=None, orderby=None, duration_s=None, title=None, user=None):
+    def getVideos(self, num=None, columns=None, orderby=None, duration_s=None, title=None, user=None, blockedFlags=0b11):
         """
         Retrieves videos from the video_stats table of Naoko's database.
 
@@ -245,7 +272,11 @@ class NaokoDB(object):
         if isinstance(user, (str, unicode)):
             where_cls += " AND vs.uname like ? COLLATE NOCASE "
             binds += (user,)
-        
+       
+        if isinstance(blockedFlags, (int, long)):
+            where_cls += " AND v.flags & ? = 0 "
+            binds += (blockedFlags,)
+
         sql = sel_cls + from_cls + where_cls
 
         def matchOrderBy(this, other):
