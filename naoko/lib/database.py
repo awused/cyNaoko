@@ -137,6 +137,11 @@ class NaokoDB(object):
                 "INSERT INTO metadata(key, value) VALUES ('dbversion', '2')"]
             for stmt in stmts:
                 self.executeDML(stmt)
+        if version < 3:
+            stmts = ["UPDATE chat SET timestamp = timestamp * 1000",
+                "UPDATE metadata SET value = 3 WHERE key = 'dbversion'"]
+            for stmt in stmts:
+                self.executeDML(stmt)
             
     @dbopen
     def initdb(self):
@@ -144,7 +149,7 @@ class NaokoDB(object):
         Initializes an empty sqlite3 database using .initscript.
         """
         self._update()
-        assert self._getVersion() >= 2
+        assert self._getVersion() >= 3
 
     @dbopen
     def cursor(self):
@@ -343,7 +348,7 @@ class NaokoDB(object):
             userid = username
         
         if timestamp is None:
-            timestamp = int(time.time())
+            timestamp = int(time.time() * 1000)
 
         chat = (timestamp, username, userid, msg, protocol, channel, flags)
         with self.cursor() as cur:

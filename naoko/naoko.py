@@ -163,6 +163,7 @@ class Naoko(object):
         self.modList = set()
         self.shuffleBump = False
         self.unregSpamBan = False
+        self.last_quote = time.time() - 5
         self.userCountTime = time.time() - USER_COUNT_THROTTLE
         
         # Keep all the state information together
@@ -513,7 +514,7 @@ class Naoko(object):
         self.db_logger.setLevel(LOG_LEVEL)
         self.db_logger.info("Starting Database Client")
         self.dbclient = client = NaokoDB(self.dbfile)
-        self.last_random = time.time()
+        self.last_random = time.time() - 5
         while self.sqlAction.wait():
             if self.closing.isSet(): break
             self.sqlAction.clear()
@@ -1429,6 +1430,10 @@ class Naoko(object):
 
     # Adds random videos from the database
     def addRandom(self, command, user, data):
+        # Limit to once every 5 seconds
+        if time.time() - self.last_random < 5: return
+        self.last_random = time.time()
+        
         if not (user.mod or len(self.vidlist) <= 10 or self.hasPermission(user, "RANDOM")): return
         
         p = self.parseParameters(data, 0b1111)
@@ -1656,16 +1661,20 @@ class Naoko(object):
         self.enqueueMsg("[8ball: %s] %s" % (data, random.choice(eight_choices)))
 
     def quote(self, command, user, data):
+        # Limit to once every 5 seconds
+        if time.time() - self.last_quote < 5: return
+        self.last_quote = time.time()
+        
         self.sql_queue.append(package(self._quote, data))
         self.sqlAction.set()
     
     def _quote(self, name):
         if not name:
-            rows = self.dbclient.fetch("SELECT username, msg FROM chat WHERE protocol = 'ST' AND username != ? AND msg NOT LIKE '/me%%' AND msg NOT LIKE '$%%' ORDER BY RANDOM() LIMIT 1", (self.name,))
+            rows = self.dbclient.fetch("SELECT username, msg, timestamp FROM chat WHERE protocol = 'ST' AND username != ? AND msg NOT LIKE '/me%%' AND msg NOT LIKE '$%%' ORDER BY RANDOM() LIMIT 1", (self.name,))
         else:
-            rows = self.dbclient.fetch("SELECT username, msg FROM chat WHERE protocol = 'ST' AND username = ? COLLATE NOCASE AND msg NOT LIKE '/me%%' AND msg NOT LIKE '$%%' ORDER BY RANDOM() LIMIT 1", (name,))
+            rows = self.dbclient.fetch("SELECT username, msg, timestamp FROM chat WHERE protocol = 'ST' AND username = ? COLLATE NOCASE AND msg NOT LIKE '/me%%' AND msg NOT LIKE '$%%' ORDER BY RANDOM() LIMIT 1", (name,))
         if rows:
-            self.enqueueMsg("[Quote  %s] %s" % (rows[0][0], rows[0][1])) 
+            self.enqueueMsg("[%s  %s] %s" % (rows[0][0], datetime.fromtimestamp(rows[0][2] / 1000).isoformat(' '), rows[0][1])) 
 
     # Kick a single user by their name.
     # Two special arguments -unnamed and -unregistered.
@@ -2103,9 +2112,6 @@ class Naoko(object):
                 self.enqueueMsg("%s - %s by %s - %s" % (r[2], datetime.fromtimestamp(r[0] / 1000).isoformat(' '), r[3], r[1]))
 
     def _addRandom(self, num, duration, title, user):
-        # Limit to once every 5 seconds
-        if time.time() - self.last_random < 5: return
-        self.last_random = time.time()
         self.logger.debug("Adding %d randomly selected videos, with title like %s, and duration no more than %s seconds, posted by user %s", num, title, duration, user)
         vids = self.dbclient.getVideos(num, ['type', 'id', 'title', 'duration_ms'], ('RANDOM()',), duration, title, user)
         self.logger.debug("Retrieved %s", vids)
