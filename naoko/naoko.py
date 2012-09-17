@@ -1122,7 +1122,7 @@ class Naoko(object):
         self.doneInit = True
 
         if self.autoLead:
-            self.asLeader(package(self.setSkip, self.selfUser, self.autoSkip), False)
+            self.asLeader(package(self.setSkip, "",  self.selfUser, self.autoSkip), False)
         else:
             if self.leader_queue:
                 def fn():
