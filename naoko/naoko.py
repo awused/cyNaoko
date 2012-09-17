@@ -788,7 +788,7 @@ class Naoko(object):
             if self.room_info["tv?"]:
                 self.pendingToss = True
                 self.deferredToss |= deferred
-                self.tossLeader = self.turnOnTV
+                self.tossLeader = self._turnOnTV
             if self.tossing:
                 self.pendingToss = True
                 self.deferredToss |= deferred
@@ -800,6 +800,8 @@ class Naoko(object):
         self.takeLeader()
 
     def _turnOnTV(self):
+        # Short sleep to give Synchtube some time to react
+        time.sleep(0.05)
         self.tossing = True
         self.pendingToss = False
         self.notGivingBack = False
@@ -1031,8 +1033,6 @@ class Naoko(object):
             return
         if self.tossing:
             self.unToss()
-            self.tossing = False
-            #self.takeLeader()
         elif self.room_info["tv?"]:
             self.send("turnoff_tv")
         else:
@@ -1104,6 +1104,7 @@ class Naoko(object):
         self.dbclient.insertChat(*args, **kwargs)
 
     def leader(self, tag, data):
+        self.logger.debug("Leader is %s", self.userlist[data])
         self.leader_sid = data
         self.tossing = False
         if self.leader_sid == self.sid:
@@ -1113,7 +1114,6 @@ class Naoko(object):
                 self.leading.set()
         else:
             self.leading.clear()
-        self.logger.debug("Leader is %s", self.userlist[data])
 
     # Automatically set the skip mode and take leader if applicable.
     # Setskip("none") will simply fail silently, so it is safe to call.
@@ -1121,10 +1121,8 @@ class Naoko(object):
         self.storeUserCount()
         self.doneInit = True
 
-        if self.autoLead and self.vidlist:
-            def setskip():
-                self.setSkip("", self.selfUser, self.autoSkip)
-            self.asLeader(setskip, False)
+        if self.autoLead:
+            self.asLeader(package(self.setSkip, self.selfUser, self.autoSkip), False)
         else:
             if self.leader_queue:
                 def fn():
