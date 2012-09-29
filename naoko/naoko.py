@@ -78,7 +78,7 @@ SynchtubeVidInfo = namedtuple('SynchtubeVidInfo',
 SynchtubeVideo = namedtuple('SynchtubeVideo',
                               ['vidinfo', 'v_sid', 'uid', 'nick'])
 
-IRCUser = namedtuple('IRCUser', ["nick", "mod"])
+IRCUser = namedtuple('IRCUser', ["nick", "mod", "uid"])
 
 # Generic object that can be assigned attributes
 class Object(object):
@@ -162,7 +162,6 @@ class Naoko(object):
         self.banTracker = {}
         self.modList = set()
         self.shuffleBump = False
-        self.unregSpamBan = False
         self.last_quote = time.time() - 5
         self.userCountTime = time.time() - USER_COUNT_THROTTLE
         
@@ -388,7 +387,7 @@ class Naoko(object):
                     msg = data[data.find("PRIVMSG " + self.channel + " :") + len("PRIVMSG " + self.channel + " :"):]
                     if not name == self.irc_nick:
                         self.st_queue.append("(" + name + ") " + msg)
-                        self.chatCommand(IRCUser(*(name, False)), msg, True)
+                        self.chatCommand(IRCUser(*(name, False, False)), msg, True)
                     self.irc_logger.info("IRC %r:%r", name, msg)
                 # Currently ignore messages sent directly to her
                 elif data.find("PRIVMSG " + self.irc_nick + " :") != -1:
@@ -542,6 +541,11 @@ class Naoko(object):
             line = f.readline()
             while line and line[0] == '#':
                 line = f.readline()
+            if line == "ON\n" or line == "OFF\n":
+                version = 0
+            else:
+                version = int(line.strip())
+                line = f.readline()
             self.autoLead = (line == "ON\n")
             line = f.readline()
             
@@ -551,6 +555,11 @@ class Naoko(object):
             self.unregSpamBan = (line == "ON\n")
             line = f.readline()
             
+            self.commandLock = ""
+            if (version >= 1):
+                self.commandLock = line[:-1]
+                line = f.readline()
+
             self.hybridModStatus = (line == "ON\n")
             self.hybridModList = {}
             line = f.readline()
@@ -565,6 +574,8 @@ class Naoko(object):
             self.autoSkip = "none"
             self.hybridModStatus = False
             self.hybridModList = {}
+            self.unregSpamBan = False
+            self.commandLock = ""
         finally:
             if f:
                 f.close()
@@ -642,6 +653,7 @@ class Naoko(object):
                                 "endpoll"           : self.endPoll,
                                 "shuffle"           : self.shuffleList,
                                 "unregspamban"      : self.setUnregSpamBan,
+                                "commandlock"       : self.setCommandLock,
                                 "add"               : self.add,
                                 "quote"             : self.quote}
 
@@ -664,7 +676,14 @@ class Naoko(object):
     # Handle chat commands from both IRC and Synchtube
     def chatCommand(self, user, msg, irc=False):
         if not msg or msg[0] != '$': return
-        
+       
+        if self.commandLock == "Mods" and not user.mod:
+            return
+        elif self.commandLock == "Registered" and not user.uid:
+            return
+        elif self.commandLock == "Named" and user.nick == "unnamed":
+            return
+
         commands = self.commandHandlers
         if irc:
             commands = self.ircCommandHandlers
@@ -953,7 +972,9 @@ class Naoko(object):
     def _play(self):
         if self.leading.isSet() or self.deferredToss & self.DEFERRED_MASKS["SKIP"]:
             if len (self.vidlist) > 1 and (not self.state.current == None) and (not self.getVideoIndexById(self.state.current) == None):
-                self.send("rm", self.state.current)
+                # TEMPORARY IF STATEMENT
+                if self.vidlist[self.getVideoIndexById(self.state.current)].vidinfo.vid != self.special:
+                    self.send("rm", self.state.current)
             self.send("s", [1,0])
             if self.deferredToss & self.DEFERRED_MASKS["SKIP"]:
                 self.deferredToss &= ~self.DEFERRED_MASKS["SKIP"]
@@ -1079,7 +1100,7 @@ class Naoko(object):
 
         if not user.sid == self.sid and self.irc_nick:
             self.irc_queue.append("(" + user.nick + ") " + msg)
-
+        
         self.chatCommand(user, msg)
 
         if user.mod or user.sid == self.sid: return
@@ -1209,6 +1230,26 @@ class Naoko(object):
             self.enqueueMsg("Unregistered spammers will have three chances.")
             self._writePersistentSettings()
 
+    def setCommandLock(self, command, user, data):
+        if not user.mod: return
+        d = data.lower()
+        if d == "registered":
+            self.commandLock = "Registered"
+            self.enqueueMsg("Unregistered users are unable to use commands.")
+            self._writePersistentSettings()
+        if d == "named":
+            self.commandLock = "Named"
+            self.enqueueMsg("Unnamed users are unable to use commands.")
+            self._writePersistentSettings()
+        if d == "mods":
+            self.commandLock = "Mods"
+            self.enqueueMsg("Only mods may use commands.")
+            self._writePersistentSettings()
+        if d == "off":
+            self.commandLock = ""
+            self.enqueueMsg("Unregistered users can use commands.")
+            self._writePersistentSettings()
+    
     def shuffleList(self, command, user, data):
         if not (user.mod or self.hasPermission(user, "SHUFFLE")): return
         self.shuffleBump = self.state.current
@@ -1564,7 +1605,9 @@ class Naoko(object):
         msg += "Enabled" if self.autoLead else "Disabled"
         msg += ", Automatic Skip Mode: %s" % (self.autoSkip)
         msg += ", Unregistered Spammers: "
-        msg += "One Chance]" if self.unregSpamBan else "3 Chances]"
+        msg += "One Chance" if self.unregSpamBan else "3 Chances"
+        msg += ", Command Lock: "
+        msg += "%s]" % (self.commandLock if self.commandLock else "Disabled")
         self.sendChat(msg)
         if self.irc_nick and self.ircclient:
             self.ircclient.sendMsg(msg)
@@ -1959,9 +2002,11 @@ class Naoko(object):
         try:
             f = open("persistentsettings", "wb")
             f.write("# This is a file generated by Naoko.\n# Do not edit it manually unless you know what you are doing.\n")
+            f.write("1\n")
             f.write("ON\n" if self.autoLead else "OFF\n")
             f.write("%s\n" % (self.autoSkip))
             f.write("ON\n" if self.unregSpamBan else "OFF\n")
+            f.write("%s\n" % (self.commandLock))
             f.write("ON\n" if self.hybridModStatus else "OFF\n")
             for h, v in self.hybridModList.iteritems():
                 if v:
@@ -2221,7 +2266,6 @@ class Naoko(object):
     # This command does not ensure the client is currently leader before executing
     def _tossLeader(self, sid):
         # Short sleep to give Synchtube some time to react
-        # TODO -- Confirm whether this fixes the rare bug I was getting
         time.sleep(0.05)
         self.pendingToss = False
         self.notGivingBack = False

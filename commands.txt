@@ -121,6 +121,10 @@ clean
     Cleans the playlist by removing all the videos that are above the current video in the playlist.
     Naoko does not check or have any way of telling if those videos have actually been played or not.
 
+commandlock off | named | registered | mods
+    Disables all commands for groups of users depending on what argument is supplied.
+    Hybrid mods are not counted as mods for the purposes of this command.
+
 delete [name | -unnamed | -title "X" | -dur (hours: | hours:minutes | :minutes | minutes)]
     Hybrid mod permission +D.
     In addition to the functionality outlined above, deletes the last video after the currently playing video matching a set of filters.
