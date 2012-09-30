@@ -112,10 +112,19 @@ class NaokoDB(object):
     def _getVersion(self):
         tables = self._getTables()
         if 'metadata' in tables:
-            with self.execute(self._version_sql) as cur:
-                version = cur.fetchone()[0]
-                self.logger.debug("Database version is %s" % version)
-                return int(version)
+            try:
+                with self.execute(self._version_sql) as cur:
+                    version = cur.fetchone()[0]
+                    self.logger.debug("Database version is %s" % version)
+                    return int(version)
+            except TypeError as e:
+                # Earlier versions didn't commit the changes, resulting in the possibility of dbversion missing.
+                # Assume it's version 3, as it is the most likely scenario and the difference between version 2 and 3 is minor.
+                self.logger.debug(e)
+                self.logger.debug("Database version is 3 (empty metadata table)")
+                self.executeDML("INSERT INTO metadata(key, value) VALUES ('dbversion', '3')")
+                self.commit()
+                return 3
         elif tables : # There was no explicit version in the original database
             self.logger.debug("Database version is 1 (no metadata table)")
             return 1
@@ -137,11 +146,13 @@ class NaokoDB(object):
                 "INSERT INTO metadata(key, value) VALUES ('dbversion', '2')"]
             for stmt in stmts:
                 self.executeDML(stmt)
+            self.commit()
         if version < 3:
             stmts = ["UPDATE chat SET timestamp = timestamp * 1000",
-                "UPDATE metadata SET value = 3 WHERE key = 'dbversion'"]
+                "UPDATE metadata SET value = '3' WHERE key = 'dbversion'"]
             for stmt in stmts:
                 self.executeDML(stmt)
+            self.commit()
             
     @dbopen
     def initdb(self):
