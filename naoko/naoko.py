@@ -2044,12 +2044,20 @@ class Naoko(object):
     # 1 << 0    : Invalid video, may become valid in the future. Reset upon successful manual add.
     # 1 << 1    : Manually blacklisted video.
     def flagVideo(self, site, vid, flags):
+        self.sql_queue.append(package(self._flagVideo, site, vid, flags))
+        self.sqlAction.set()
+
+    def _flagVideo(self, site, vid, flags):
         self.db_logger.debug("Flagging %s:%s with flags %s", site, vid, bin(flags))
         self.dbclient.executeDML("UPDATE videos SET flags=(flags | ?) WHERE type = ? AND id = ?", (flags, site, vid))
         self.dbclient.commit()
-
+    
     # Remove flags from a video.
     def unflagVideo(self, site, vid, flags):
+        self.sql_queue.append(package(self._unflagVideo, site, vid, flags))
+        self.sqlAction.set()
+
+    def _unflagVideo(self, site, vid, flags):
         self.dbclient.executeDML("UPDATE videos SET flags=(flags & ?) WHERE type = ? AND id = ?", (~flags, site, vid))
         self.dbclient.commit()
 
@@ -2099,8 +2107,7 @@ class Naoko(object):
             # TEMPORARY IF STATEMENT
             if vi.vid.find("whatisthis") == -1:
                 # Flag the video as invalid.
-                self.sql_queue.append(package(self.flagVideo, vi.site, vi.vid, 1))
-                self.sqlAction.set()
+                self.flagVideo(vi.site, vi.vid, 1)
             # Go even further and remove it from the playlist completely
             if echo:
                 self.enqueueMsg("Invalid video removed.")
@@ -2123,7 +2130,7 @@ class Naoko(object):
         self.dbclient.executeDML("INSERT OR IGNORE INTO videos VALUES(?, ?, ?, ?, ?)", (site, vid, int(dur * 1000), title, 0))
         self.dbclient.executeDML("INSERT INTO video_stats VALUES(?, ?, ?)", (site, vid, nick))
         self.dbclient.commit()
-        self.unflagVideo(site, vid, 1)
+        self._unflagVideo(site, vid, 1)
     
     def _sqlInsertUserCount(self, timestamp, count):
         self.db_logger.debug("Inserting %s into user_count", (timestamp, count))
