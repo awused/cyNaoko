@@ -716,7 +716,7 @@ class Naoko(object):
             videoIndex = self.getVideoIndexById(self.state.current)
             if videoIndex == None:
                 videoIndex = -1
-            if not self.vidlist:
+            if not self.vidlist or len(self.vidlist) == 1:
                 self.logger.debug("Empty list, playing default video.")
                 # Hardcoded video.
                 self.send("cm", ["yt", "hGqyJmlJ-MY", u"\u304a\u3061\u3083\u3081\u6a5f\u80fd\u3092\u9ed2\u5b50\u3063\u307d\u304f\u6b4c\u3063\u3066\u307f\u305f" ,"http://i.ytimg.com/vi/hGqyJmlJ-MY/default.jpg", 92])
@@ -963,7 +963,7 @@ class Naoko(object):
     # Actions required when a video starts playing with Naoko as the leader.
     def _play(self):
         if self.leading.isSet() or self.deferredToss & self.DEFERRED_MASKS["SKIP"]:
-            if len (self.vidlist) > 1 and (not self.state.current == None) and (not self.getVideoIndexById(self.state.current) == None):
+            if (not self.state.current == None) and (not self.getVideoIndexById(self.state.current) == None): 
                 self.send("rm", self.state.current)
             self.send("s", [1,0])
             if self.deferredToss & self.DEFERRED_MASKS["SKIP"]:
