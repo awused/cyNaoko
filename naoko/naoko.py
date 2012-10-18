@@ -716,7 +716,7 @@ class Naoko(object):
             videoIndex = self.getVideoIndexById(self.state.current)
             if videoIndex == None:
                 videoIndex = -1
-            if not self.vidlist or len(self.vidlist) == 1:
+            if not self.vidlist or (len(self.vidlist) == 1 and videoIndex >= 0):
                 self.logger.debug("Empty list, playing default video.")
                 # Hardcoded video.
                 self.send("cm", ["yt", "hGqyJmlJ-MY", u"\u304a\u3061\u3083\u3081\u6a5f\u80fd\u3092\u9ed2\u5b50\u3063\u307d\u304f\u6b4c\u3063\u3066\u307f\u305f" ,"http://i.ytimg.com/vi/hGqyJmlJ-MY/default.jpg", 92])
@@ -1146,7 +1146,7 @@ class Naoko(object):
         storeTime = time.time()
         if storeTime - self.userCountTime > USER_COUNT_THROTTLE:
             self.userCountTime = storeTime
-            self.sql_queue.append(package(self._sqlInsertUserCount, count, int(storeTime * 1000)))
+            self.sql_queue.append(package(self._sqlInsertUserCount, int(storeTime * 1000), count))
             self.sqlAction.set()
     
     # Command handlers for commands that users can type in Synchtube chat
@@ -1246,7 +1246,7 @@ class Naoko(object):
         self.asLeader(package(self.send, "shuffle"), deferred=self.DEFERRED_MASKS["SHUFFLE"]) 
 
     def help(self, command, user, data):
-        self.enqueueMsg("I only do this out of pity. https://github.com/Suwako/Naoko/blob/master/commands.txt")
+        self.enqueueMsg("I only do this out of pity. https://raw.github.com/Suwako/Naoko/master/commands.txt")
         #self.enqueueMsg("I refuse; you are beneath me.")
 
     # Creates a poll given an asterisk separated list of strings containing the title and at least two choices.
@@ -2054,6 +2054,7 @@ class Naoko(object):
                 title, dur, embed = data
                 if not embed:
                     self.logger.debug("Embedding disabled.")
+                    self.logger.debug(data)
                     self.invalidVideo("Embedding disabled.")
                     return
                 # When someone has manually added a video with an incorrect duration.
@@ -2088,6 +2089,7 @@ class Naoko(object):
         if not valid: #or title != vi.title:
             # The video is invalid don't insert it.
             self.logger.debug("Invalid video, skipping SQL insert.")
+            self.logger.debug(data)
             # Flag the video as invalid.
             self.flagVideo(vi.site, vi.vid, 1)
             # Go even further and remove it from the playlist completely
@@ -2191,7 +2193,7 @@ class Naoko(object):
         idx = self.getVideoIndexById(v)
         if idx >= 0:
             self.vidLock.acquire()
-            vid = self.vidlist.pop(idx)
+            self.vidlist.pop(idx)
             self.vidLock.release()
 
     def _moveVideo(self, v, after=None):

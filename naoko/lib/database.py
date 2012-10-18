@@ -153,6 +153,12 @@ class NaokoDB(object):
             for stmt in stmts:
                 self.executeDML(stmt)
             self.commit()
+        if version < 4:
+            stmts = ["UPDATE user_count SET timestamp = count, count = timestamp WHERE timestamp < 1000",
+                "UPDATE metadata SET value = '4' WHERE key = 'dbversion'"]
+            for stmt in stmts:
+                self.executeDML(stmt)
+            self.commit()
             
     @dbopen
     def initdb(self):
@@ -160,7 +166,7 @@ class NaokoDB(object):
         Initializes an empty sqlite3 database using .initscript.
         """
         self._update()
-        assert self._getVersion() >= 3
+        assert self._getVersion() >= 4
 
     @dbopen
     def cursor(self):
