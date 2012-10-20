@@ -1,5 +1,6 @@
 *.pyc
 *.db
+*.db-journal
 *.swp
 *.lst
 cbclient.py
