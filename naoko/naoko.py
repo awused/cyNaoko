@@ -27,6 +27,7 @@ import code
 
 from lib.repl import Repl
 from settings import *
+from webserver import startServer
 from lib.database import NaokoDB
 from lib.sioclient import SocketIOClient
 from lib.ircclient import IRCClient
@@ -294,6 +295,10 @@ class Naoko(object):
             self.sql_queue = deque()
             self.sqlthread = threading.Thread(target=Naoko._sqlloop, args=[self])
             self.sqlthread.start()
+            # A database is required for Naoko's web server
+            if self.webserver_mode == "embedded":
+                self.webthread = threading.Thread(target=startServer, args=[self])
+                self.webthread.start()
 
         # Start a REPL on the specified port. Only accept connections from localhost
         # and expose ourself as 'naoko' in the REPL's local scope
@@ -314,6 +319,7 @@ class Naoko(object):
                 # Catch the case where the client is still connecting after 5 seconds
                 status = status and (not self.client.heartBeatEvent or self.client.hbthread.isAlive())
                 status = status and (not self.dbfile or self.sqlthread.isAlive())
+                status = status and (not self.dbfile or self.webserver_mode != "embedded" or self.webthread.isAlive())
                 status = status and self.playthread.isAlive()
                 status = status and self.apithread.isAlive()
             except Exception as e:
@@ -459,6 +465,12 @@ class Naoko(object):
     # Only the $status command and error messages should send a chat message to Synchtube or IRC outside this thread.
     def _chatloop(self):
         while not self.closing.isSet():
+            # Detect when far too many messages are being sent and clear the queue
+            if len(self.irc_queue) > 20 or len(self.st_queue) > 20:
+                time.sleep(5)
+                self.irc_queue.clear()
+                self.st_queue.clear()
+                continue
             if self.muted:
                 self.irc_queue.clear()
                 self.st_queue.clear()
@@ -2272,3 +2284,8 @@ class Naoko(object):
         self.apikeys.mst_secret = config.get("naoko", "mst_client_secret")
         self.apikeys.sc_id = config.get("naoko", "sc_client_id")
         self.apikeys.wf_id = config.get("naoko", "wolfram_id")
+        self.webserver_mode = config.get("naoko", "webserver_mode")
+        self.webserver_host = config.get("naoko", "webserver_host")
+        self.webserver_port = config.get("naoko", "webserver_port")
+        self.webserver_protocol = config.get("naoko", "webserver_protocol")
+

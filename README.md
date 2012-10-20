@@ -7,6 +7,7 @@
     Without curl installed Naoko will be unable to verify Dailymotion videos or properly handle removed videos or videos with embedding disabled.
     She will wait DEFAULT_WAIT, which is set to 3 hours, if a leader changes to a Dailymotion video bypassing the playlist, so curl is strongly recommended.
     This bug does not affect Windows users and they will not need to install any additional programs.
+- Running the web server with the fastcgi protocol requires that flup be installed. It can be installed using pip flup or easy\_install flup
 
 ## Usage
 <pre>
@@ -16,6 +17,18 @@
 </pre>
 
 Edit the included `naoko.conf` file to control the settings. By default the bot will join room "Science" with the nick "DenshiBot"
+
+## Web Server Usage
+By default the web server is disabled. Configure the web server in `naoko.conf`
+The webserver can be run in two modes: standalone, in which the web server is run as a separate daemon process, and embedded, in which the web server runs as part of Naoko.
+Currently standalone mode only works on operating systems that supply a proper fork(), which does not include Windows.
+
+To control standalone mode use:
+<pre>
+    python naoko/webserver.py start|stop|restart|status
+</pre>
+
+The web server can be run either as an http server using the bottle.py development server, which is slow but straightforward, or as a fastcgi server using flup. 
 
 ## History by Falaina
 This is just a small explanation on how this code relates to the bot that used to be in the synchtube animu room.
