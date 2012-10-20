@@ -28,7 +28,7 @@ To control standalone mode use:
     python naoko/webserver.py start|stop|restart|status
 </pre>
 
-The web server can be run either as an http server using the bottle.py development server, which is slow but straightforward, or as a fastcgi server using flup. 
+The web server can be run either as an http server using the bottle.py development server, which is slow but straightforward, or as a fastcgi server using flup. The fastcgi server only works in standalone mode. 
 
 ## History by Falaina
 This is just a small explanation on how this code relates to the bot that used to be in the synchtube animu room.
