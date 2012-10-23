@@ -1336,35 +1336,40 @@ class Naoko(object):
     def bump(self, command, user, data):
         if not (user.mod or self.hasPermission(user, "BUMP")): return
         
-        params = data.lower().split(" ",  1)
-        target = params[0]
-        if target == "-unnamed":
-            target = "" 
-        elif target and target != "-":
-            target = self.filterString(target, True)[1]
-            # Don't bump anything if only invalid characters were provided.
-            if not target: return
+        p = self.parseParameters(data, 0b10011)
+     
+        if not p: return
+        name, num, title = p["base"], p["num"], p["title"]
+        if not name == None:
+            if name == "-unnamed":
+                name = ""
+            elif name == "-all":
+                name = None
+            else:
+                name = self.filterString(name, True)[1]
+                if not name: return
         else:
-            target = user.nick.lower()
-        
-        num = 1
-        if len(params) > 1:
-            try:
-                num = int(params[1])
-                if num > 5: return
-            except (TypeError, ValueError) as e:
-                return
+            if not title:
+                name = user.nick.lower()
+
+        if not num:
+            num = 1
+        else:
+            if num > 10 or num < 1: return
         
         videoIndex = self.getVideoIndexById(self.state.current)
         
         bumpList = []
-        i = len(self.vidlist) - 1
-        while i > videoIndex and len(bumpList) < num:
-            if i == videoIndex + 1 and not bumpList: return
-            if self.vidlist[i].nick.lower() == target:
-                bumpList.append(self.vidlist[i].v_sid)
+        i = len(self.vidlist)
+        while i > videoIndex + 2 and len(bumpList) < num:
             i -= 1
-        
+            v = self.vidlist[i]
+            # Match names
+            if not (None == name or v.nick.lower() == name): continue
+            # Titles 
+            if title and v.vidinfo.title.lower().find(title) == -1: continue
+            bumpList.append(v.v_sid)    
+
         if bumpList:
             after = None
             if videoIndex >= 0:
@@ -1417,9 +1422,15 @@ class Naoko(object):
     # Mods can purge themselves, and Naoko can be purged only by a mod.
     def purge(self, command, user, data):
         if not (user.mod or self.hasPermission(user, "PURGE")): return
-        p = self.parseParameters(data, 0b10111)
+        p = self.parseParameters(data, 0b111)
         if not p: return
         name, duration, title = p["base"], p["dur"], p["title"]
+        if not name == None:
+            if name == "-unnamed":
+                name = ""
+            else:
+                name = self.filterString(name, True)[1]
+                if not name: return
         if name == None and not duration and not title: return
         if duration and duration < 20 * 60: return
 
@@ -1447,27 +1458,48 @@ class Naoko(object):
         # Due to the way Synchtube handles videos added by unregistered users they are
         # unable to delete their own videos. This prevents them abusing it to delete
         # videos added by registered users.
-        if user.uid == None: return
+        if not user.uid: return 
         p = self.parseParameters(data, 0b10111)
         if not p: return
-        name, duration, title = p["base"], p["dur"], p["title"]
+        name, duration, title, num = p["base"], p["dur"], p["title"], p["num"]
+        if not name == None:
+            if name == "-unnamed":
+                name = ""
+            elif name == "-all":
+                name = None
+            else:
+                name = self.filterString(name, True)[1]
+                if not name: return
+        else:
+            if not duration and not title:
+                name = user.nick.lower()
+
+        if not num:
+            num = 1
+        else:
+            if num > 10 or num < 1: return
         
         # Non-mods and non-hybrid mods can only delete their own videos
         # This does prevent unregistered users from deleting their own videos
-        if (not name == None or title or duration) and not (user.mod or self.hasPermission(user, "DELETE")): return
-        if name == None and not duration and not title: 
-            name = user.nick.lower()
-
+        if (not user.nick.lower() == name or title or duration) and not (user.mod or self.hasPermission(user, "DELETE")): return
+        
         videoIndex = self.getVideoIndexById(self.state.current)
-        i = len(self.vidlist) - 1
-        while i > videoIndex:
-            v = self.vidlist[i]
-            # Delete the last video that matches all criteria
-            if (name == None or v.nick.lower() == name) and (not duration or v.vidinfo.dur >= duration) and (not title or v.vidinfo.title.lower().find(title) != -1):
-                break
+        
+        kill = []
+        i = len(self.vidlist)
+        while i > videoIndex + 1 and len(kill) < num:
             i -= 1
-        if i == videoIndex: return
-        self.asLeader(package(self.send, "rm", self.vidlist[i].v_sid))
+            v = self.vidlist[i]
+            # Match names
+            if None != name and v.nick.lower() != name: continue
+            # Titles 
+            if title and v.vidinfo.title.lower().find(title) == -1: continue
+            # Durations
+            if duration and v.vidinfo.dur < duration: continue
+            kill.append(v.v_sid)    
+
+        if kill:
+            self.asLeader(package(self._cleanPlaylist, list(kill)))
 
     # Adds random videos from the database
     def addRandom(self, command, user, data):
@@ -1489,7 +1521,7 @@ class Naoko(object):
 
         try:
             num = int(num)
-            if num > 20 or (not user.mod and not self.hasPermission(user, "RANDOM") and num > 5): return
+            if num > 20 or (not user.mod and not self.hasPermission(user, "RANDOM") and num > 5) or num < 1: return
         except (TypeError, ValueError) as e:
             if num: return
             num = 5
@@ -1835,14 +1867,15 @@ class Naoko(object):
             self.enqueueMsg("Wolfram Alpha query failed.")
     
     # Parses the parameters common to several functions.
-    # Returns a lone string, often a name or number, a title specified by -title and quotes, and
+    # All returned values are lower case
+    # Returns a lone unfiltered string, often a name or number, a title specified by -title and quotes, and
     # a duration in seconds. The title must be at least 3 characters.
     # A mask is passed to determine which options are looked for.
     # base      : 1
     # -title    : 1 << 1
     # -dur      : 1 << 2
     # -user     : 1 << 3
-    # -unnamed  : 1 << 4
+    # -n        : 1 << 4
     def parseParameters(self, data, mask):
         text = data.lower().split("\"")
         
@@ -1858,15 +1891,13 @@ class Naoko(object):
         duration = None
         title = None
         user = None
+        num = None
         # Could be done with a huge regexp but this is probably cleaner and easier to maintain.
         while params:
             t = params.popleft()
             if not t: continue
             if t == -1: return
-            if t == "-unnamed" and mask & (1 << 4):
-                if not base == None: return
-                base = ""
-            elif t == "-title" and mask & (1 << 1):
+            if t == "-title" and mask & (1 << 1):
                 if title or not params or params.popleft(): return 
                 if not params or not params.popleft() == -1 or len(text) < 3: return
                 title = text[1]
@@ -1889,14 +1920,21 @@ class Naoko(object):
                 if user or not params: return
                 user = params.popleft()
                 if not user or user == -1: return
+            elif t == "-n" and mask & (1 << 4):
+                if num or not params: return
+                try:
+                    num = int(params.popleft())
+                except Exception:
+                    return
             else:
                 if not t: continue
                 if not base == None or not mask & 1: return
-                base = self.filterString(t, True)[1]
+                base = t
         return {"base"  : base,
                 "dur"   : duration,
                 "title" : title,
-                "user"  : user}
+                "user"  : user,
+                "num": num}
 
     # Two functions that search the lists in an efficient manner
 
@@ -2030,7 +2068,7 @@ class Naoko(object):
     def _sqlInsertBan(self, user, reason, time, modName):
         auth = 0
         # As found elsewhere, user.auth is unreliable.
-        if not user.uid == None:
+        if user.uid:
             auth = 1
         self.db_logger.debug("Inserting %s into bans", (reason, auth, user.nick, int(round(time*1000)), modName))
         self.dbclient.executeDML("INSERT INTO bans VALUES(?, ?, ?, ?, ?)", (reason, auth, user.nick, int(round(time*1000)), modName))
@@ -2109,7 +2147,8 @@ class Naoko(object):
                 self.enqueueMsg("Invalid video removed.")
             self.stExecute(package(self.asLeader, package(self.send, "rm", v.v_sid)))
             return
-        if valid == "Unknown": return
+        # Curl is missing or the duration is 0, don't insert it but leave it on the playlist
+        if valid == "Unknown" or dur == 0: return
 
         # Don't insert videos added by Naoko.
         if str(v.uid) == self.userid: return

@@ -58,8 +58,8 @@ addrandom X
     This command is throttled so that it can only be called by any user once every five seconds.
     Less restrictions affect mods.
 
-delete
-    Deletes the last video added by the user who calls this command. This will not delete the currently playing video.
+delete [-n X]
+    Deletes the last X videos added by the user who calls this command up to a maximum of ten. This will not delete the currently playing video.
     Due to how Synchtube handles adding videos for unregistered but named users, no unregistered users can delete their own videos, and this command is disabled for them.
     More options are available to mods.
 
@@ -109,12 +109,16 @@ banlist [-v]
     Hybrid mod permission +Q.
     Displays the list of currently banned users. If the -v flag is provided it also displays the IDs of the banned users.
 
-bump [(name | -unnamed | -) [X]]
+bump [name | -unnamed | -all] [-title "TITLE"] [ -dur (hours: | hours:minutes | :minutes | minutes)] [-n X]
     Hybrid mod permission +B.
-    Bumps the last video added by the specified user to the next spot on the playlist after the current video. If -unnamed is provided it will bump the last video without a name.
-    If a hyphen is provided it will behave the same as if no name is supplied, but will allow for multiple videos to be bumped at once.
-    This includes videos added by any unregistered user, named or unnamed.
-    Bumps X videos, defaulting to one, and with a maximum of 5. Bumps videos such that the relative order of the bumped videos is maintained.
+    Bumps videos so they will play next while maintaining their relative order
+    Any combination of filters is supported, except combining a name and -unnamed. When combining filters only videos which match all provided filters will be removed.
+    Providing a title, in quotes, of length at least 3 characters will match any video with that substring in the title, ignoring case.
+    Providing a name will match all videos posted by a registered user with that name.
+    Providing no name or title will match all videos added by the user who calls this.
+    Providing a number will delete the bottom X videos matching all other filters, up to a maximum of ten, with a default of one.
+    Providing -unnamed will match all videos added by unregistered users.
+    Providing -all will match videos added by any user, this is implicit when a title is provided but can be overriden.
 
 clean
     Hybrid mod permission +C.
@@ -125,14 +129,17 @@ commandlock off | named | registered | mods
     Disables all commands for groups of users depending on what argument is supplied.
     Hybrid mods are not counted as mods for the purposes of this command.
 
-delete [name | -unnamed | -title "X" | -dur (hours: | hours:minutes | :minutes | minutes)]
+delete [name | -unnamed | -all] [-title "TITLE"] [ -dur (hours: | hours:minutes | :minutes | minutes)] [-n X]
     Hybrid mod permission +D.
     In addition to the functionality outlined above, deletes the last video after the currently playing video matching a set of filters.
-    Any combination of filters is supported, except combining a name and -unnamed. When combining filters only videos which match all provided filters will be removed.
+    When combining filters only videos which match all provided filters will be removed.
     Providing a title, in quotes, of length at least 3 characters will match any video with that substring in the title, ignoring case.
     Providing a duration will match all videos with a length of at least that duration.
     Providing a name will match all videos posted by a registered user with that name.
+    Providing no name, title, or duration will match all videos added by the user who calls this.
+    Providing a number will delete the bottom X videos matching all other filters, up to a maximum of ten, with a default of one.
     Providing -unnamed will match all videos added by unregistered users.
+    Providing -all will match videos added by any user, this is implicit when a title or duration is provided but can be overridden.
 
 duplicates
     Hybrid mod permission +T.
