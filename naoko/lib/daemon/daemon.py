@@ -74,7 +74,7 @@ class Daemon:
         pid = self._check() 
     
         if pid:
-            sys.stderr.write("Daemon already running.")
+            sys.stderr.write("Daemon already running.\n")
             sys.exit(1)
         
         # Start the daemon

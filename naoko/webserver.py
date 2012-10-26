@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # A simple webserver for Naoko that serves up some interesting statistics.
 # In integrated mode this is started with Naoko and uses her instance of NaokoDB, though not the thread.
-from lib.bottle import route, run, default_app
+from lib.external.bottle import route, run, default_app
 
 class NaokoWebServer(object):
     def __init__(self, dbclient, host, port, protocol):
