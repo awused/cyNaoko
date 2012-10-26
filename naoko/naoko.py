@@ -1123,10 +1123,6 @@ class Naoko(object):
                 reason = "%s sent a blacklisted message" % (user.nick)
                 self.chatKick(user, reason)
     
-    # Wrapper for dbclient.insertChat
-    def insertChat(self, *args, **kwargs):
-        self.dbclient.insertChat(*args, **kwargs)
-
     def leader(self, tag, data):
         self.logger.debug("Leader is %s", self.userlist[data])
         self.leader_sid = data
@@ -1159,7 +1155,7 @@ class Naoko(object):
         storeTime = time.time()
         if storeTime - self.userCountTime > USER_COUNT_THROTTLE:
             self.userCountTime = storeTime
-            self.sql_queue.append(package(self.dbclient.insertUserCount, count, storeTime))
+            self.sql_queue.append(package(self.insertUserCount, count, storeTime))
             self.sqlAction.set()
     
     # Command handlers for commands that users can type in Synchtube chat
@@ -1603,7 +1599,7 @@ class Naoko(object):
             self.logger.debug("Adding video %s %s %s %s", title, site, vid, dur)
             self.stExecute(package(self.asLeader, package(self.send, "am", [site, vid, self.filterString(title)[1], "http://i.ytimg.com/vi/%s/default.jpg" % (vid), dur])))
             if store:
-                self.sql_queue.append(package(self.dbclient.insertVideo, site, vid, title, dur, nick))
+                self.sql_queue.append(package(self.insertVideo, site, vid, title, dur, nick))
                 self.sqlAction.set()
     
     def lock(self, command, user, data):
@@ -1849,8 +1845,8 @@ class Naoko(object):
     # Only callable through telnet
 
     # Kicks everyone in the channel except Naoko.
-    def clearRoom(self):
-        self.stExecute(package(self.asLeader, package(self._kickList, (u for u in self.userlist.iterkeys() if u != self.sid))))
+    def clearRoom(self, kickSelf=False):
+        self.stExecute(package(self.asLeader, package(self._kickList, (u for u in self.userlist.iterkeys() if kickSelf or u != self.sid))))
 
     # Imports all the videos in <filename>.lst
     # An lst file is simply a plain text file containing a list of videos, one per line.
@@ -2085,6 +2081,18 @@ class Naoko(object):
         self.sql_queue.append(package(self.dbclient.unflagVideo, site, vid, flags))
         self.sqlAction.set()
 
+    # Wrapper for dbclient.insertVideo
+    def insertVideo(self, *args, **kwargs):
+        self.dbclient.insertVideo(*args, **kwargs)
+    
+    # Wrapper for dbclient.insertUserCount
+    def insertUserCount(self, *args, **kwargs):
+        self.dbclient.insertUserCount(*args, **kwargs)
+    
+    # Wrapper for dbclient.insertChat
+    def insertChat(self, *args, **kwargs):
+        self.dbclient.insertChat(*args, **kwargs)
+
     # Checks to see if the current video isn't invalid, blocked, or removed.
     # Also updates the duration if necessary to prevent certain types of annoying attacks on the room.
     def _checkVideo(self, vi):
@@ -2146,7 +2154,7 @@ class Naoko(object):
         if sql:
             # The insert the video using the retrieved title and duration.
             # Trust the external APIs over the Synchtube playlist.
-            self.sql_queue.append(package(self.dbclient.insertVideo, vi.site, vi.vid, title, dur, v.nick))
+            self.sql_queue.append(package(self.insertVideo, vi.site, vi.vid, title, dur, v.nick))
             self.sqlAction.set()
 
     def _lastBans(self, nick, num):

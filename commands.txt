@@ -260,9 +260,11 @@ V - Autosetskip
 --- Naoko Administrator Only ---
 These functions are only available to the administrator of Naoko through telnet.
 
-clearRoom()
-    Kicks everyone in the room. No exceptions except Naoko herself.
+clearRoom(bool kickSelf=False)
+    Kicks everyone in the room. No exceptions except Naoko herself, unless kickSelf is True.
     This function is a last resort for recovering access to rooms in unusual circumstances such as hanging connections.
+    Invoking this with kickSelf set to True will reinitialize the room object, which will fix any errors related to the
+    IP-based connection limit.
 
 importFile(string filename, string name=None)
     Opens <filename>.lst, which is a text file containing a list of urls to vidoes (such as are accepted by $add), one per line.
