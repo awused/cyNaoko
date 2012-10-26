@@ -18,9 +18,9 @@ class MyDaemon(Daemon):
 # arguments : a tuple or list of arguments for the target
 # This does not fail silently and communicates to the user over stdout.
 # This should not be used as a component of something larger unless you know exactly what you're doing.
-def manageDaemon(target, command, filename="manager",  pidfile="/tmp/daemon-example.pid", wd="/",  stdio=[], args=[]):
+def manageDaemon(target, command, filename="manager",  pidfile="/tmp/daemon-example.pid", wd="/",  stdio=[], args=[], kwargs={}):
     def run(self):
-        target(*args)
+        target(*args, **kwargs)
     MyDaemon.run = run
     daemon = MyDaemon(pidfile, wd, *stdio)
 
