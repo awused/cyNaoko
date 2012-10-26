@@ -351,7 +351,7 @@ class NaokoDB(object):
         timestamp is the timestamp the message was received. If None
         timestamp will default to the time insertChat was called.
 
-        proto is the protocol over which the message was sent. The
+        protocol is the protocol over which the message was sent. The
         default protocol is 'ST'.
 
         channel is the channel or room for which the message was 
@@ -373,8 +373,123 @@ class NaokoDB(object):
             cur.execute("INSERT INTO chat VALUES(?, ?, ?, ?, ?, ?, ?)", chat)
         self.commit()
 
+    def getQuote(self, nick, exclude, protocol='ST'):
+        """
+        Fetch a random quote out of the chat database from a user with a matching nick on the given protocol.
+
+        If no quote is found a value of None will be returned.
+
+        If no nick is supplied it will select from all users except the user exclude.
+        """
+        select_cls = "SELECT username, msg, timestamp FROM chat "
+        where_cls = " WHERE protocol = ? AND msg NOT LIKE '/me%%' AND msg NOT LIKE '$%%' "
+        limit_cls = " ORDER BY RANDOM() LIMIT 1"
+        binds = (protocol,)
+        
+
+        if nick:
+            where_cls += " AND username = ? COLLATE NOCASE "
+            binds += (nick,)
+        else:
+            where_cls += " AND username != ? "
+            binds += (exclude,)
+
+        sql = select_cls + where_cls + limit_cls
+
+        rows = self.fetch(sql, binds)
+        if rows: return rows[0]
+        else: return None
+
+    def flagVideo(self, site, vid, flags):
+        """
+        Flags a video with the supplied flags.
+
+        Flags:
+
+        1 << 0  : Invalid video, may become valid in the future. Reset upon successful manual add.
+        1 << 1  : Manually blacklisted video.
+        """
+        self.logger.debug("Flagging %s:%s with flags %s", site, vid, bin(flags))
+        self.executeDML("UPDATE videos SET flags=(flags | ?) WHERE type = ? AND id = ?", (flags, site, vid))
+        self.commit()
+
+    def unflagVideo(self, site, vid, flags):
+        """
+        Removes the supplied flags from a video.
+        """
+        self.executeDML("UPDATE videos SET flags=(flags & ?) WHERE type = ? AND id = ?", (~flags, site, vid))
+        self.commit()
+
+    def insertVideo(self, site, vid, title, dur, nick):
+        """
+        Inserts a video into the database.
+
+        The video is assumed to be valid so it also removes the invalid flag from the video.
+
+        dur is supplied in seconds as a float but stored in milliseconds as an integer.
+
+        nick is the username of the user who added it, with unregistered users using an empty string.
+        """
+        self.logger.debug("Inserting %s into videos", (site, vid, int(dur * 1000), title, 0))
+        self.logger.debug("Inserting %s into video_stats", (site, vid, nick))
+        self.executeDML("INSERT OR IGNORE INTO videos VALUES(?, ?, ?, ?, ?)", (site, vid, int(dur * 1000), title, 0))
+        self.executeDML("INSERT INTO video_stats VALUES(?, ?, ?)", (site, vid, nick))
+        self.commit()
+        self.unflagVideo(site, vid, 1)
+
+    def insertUserCount(self, count, timestamp):
+        """
+        Stores the user count at the time provided.
+
+        The timestamp is provided in seconds as a float but stored in milliseconds as an integer.
+        """
+        self.logger.debug("Inserting %s into user_count", (int(timestamp*1000), count))
+        self.executeDML("INSERT INTO user_count VALUES(?, ?)", (int(timestamp*1000), count))
+        self.commit()
+
+    def insertBan(self, user, reason, timestamp, modName):
+        """
+        Inserts a ban into the database.
+
+        user is a SynchtubeUser
+
+        reason is a string giving the reason why the user was banned
+
+        The timestamp is provided in seconds as a float but stored in milliseconds as an integer.
+       
+        modName is the name of the mod who initiated the ban.
+
+        user.uid is used to determine if the user was logged in.
+        """
+        # As found elsewhere, user.auth is unreliable.
+        auth = int(bool(user.uid))
+        self.logger.debug("Inserting %s into bans", (reason, auth, user.nick, int(timestamp*1000), modName))
+        self.executeDML("INSERT INTO bans VALUES(?, ?, ?, ?, ?)", (reason, auth, user.nick, int(timestamp*1000), modName))
+        self.commit()
+
+    def getLastBans(self, nick, num):
+        """
+        Fetches the most recent num bans for the specified user.
+
+        If the nick given is -all, the most recent bans for any user will be returned.
+        """
+        select_cls = "SELECT timestamp, reason, mod, uname FROM bans "
+        where_cls = ""
+        order_cls = " ORDER BY timestamp DESC LIMIT ?"
+        binds = ()
+
+        if nick != "-all":
+            where_cls = " WHERE uname = ? COLLATE NOCASE "
+            binds += (nick,)
+
+        binds += (num,)
+
+        sql = select_cls + where_cls + order_cls
+        return self.fetch(sql, binds)
+
 # Run some tests if called directly
-if __name__ == '__main__':
+# These probably don't work anymore
+if __name__ == '__main__' and False:
     logging.basicConfig(format='%(name)-15s:%(levelname)-8s - %(message)s')
     cur_log = logging.getLogger('naokocursor')
     db_log  = logging.getLogger('database')

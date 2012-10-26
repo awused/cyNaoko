@@ -667,7 +667,8 @@ class Naoko(object):
                                 "unregspamban"      : self.setUnregSpamBan,
                                 "commandlock"       : self.setCommandLock,
                                 "add"               : self.add,
-                                "quote"             : self.quote}
+                                "quote"             : self.quote,
+                                "accident"          : self.accident}
 
     def _initIRCCommandHandlers(self):
         self.ircCommandHandlers = {"status"             : self.status,
@@ -1158,7 +1159,7 @@ class Naoko(object):
         storeTime = time.time()
         if storeTime - self.userCountTime > USER_COUNT_THROTTLE:
             self.userCountTime = storeTime
-            self.sql_queue.append(package(self._sqlInsertUserCount, int(storeTime * 1000), count))
+            self.sql_queue.append(package(self.dbclient.insertUserCount, count, storeTime))
             self.sqlAction.set()
     
     # Command handlers for commands that users can type in Synchtube chat
@@ -1170,6 +1171,11 @@ class Naoko(object):
         if not (user.mod or self.hasPermission(user, "SKIP")): return
         self.asLeader(self.nextVideo, deferred=self.DEFERRED_MASKS["SKIP"])
 
+    def accident(self, command, user, data):
+        if not user.mod: return
+        self.enqueueMsg("A terrible accident has befallen the currently playing video.")
+        self.asLeader(self.nextVideo, deferred=self.DEFERRED_MASKS["SKIP"])
+    
     # Set the skipping mode. Takes either on, off, x, or x%.
     def setSkip(self, command, user, data):
         if not (user.mod or self.hasPermission(user, "SKIP")): return
@@ -1214,11 +1220,11 @@ class Naoko(object):
         if d == "on":
             self.autoLead = True
             self.enqueueMsg("Automatic leading is enabled.")
-            self._writePersistentSettings()
-        if d == "off":
+        elif d == "off":
             self.autoLead = False
             self.enqueueMsg("Automatic leading is disabled.")
-            self._writePersistentSettings()
+        else: return    
+        self._writePersistentSettings()
 
     def setUnregSpamBan(self, command, user, data):
         if not (user.mod or self.hasPermission(user, "UNREGSPAMBAN")): return
@@ -1226,11 +1232,11 @@ class Naoko(object):
         if d == "on":
             self.unregSpamBan = True
             self.enqueueMsg("Unregistered spammers will be banned for the first offense.")
-            self._writePersistentSettings()
-        if d == "off":
+        elif d == "off":
             self.unregSpamBan = False
             self.enqueueMsg("Unregistered spammers will have three chances.")
-            self._writePersistentSettings()
+        else: return
+        self._writePersistentSettings()
 
     def setCommandLock(self, command, user, data):
         if not user.mod: return
@@ -1238,19 +1244,17 @@ class Naoko(object):
         if d == "registered":
             self.commandLock = "Registered"
             self.enqueueMsg("Unregistered users are unable to use commands.")
-            self._writePersistentSettings()
-        if d == "named":
+        elif d == "named":
             self.commandLock = "Named"
             self.enqueueMsg("Unnamed users are unable to use commands.")
-            self._writePersistentSettings()
-        if d == "mods":
+        elif d == "mods":
             self.commandLock = "Mods"
             self.enqueueMsg("Only mods may use commands.")
-            self._writePersistentSettings()
-        if d == "off":
+        elif d == "off":
             self.commandLock = ""
             self.enqueueMsg("Unregistered users can use commands.")
-            self._writePersistentSettings()
+        else: return
+        self._writePersistentSettings()
     
     def shuffleList(self, command, user, data):
         if not (user.mod or self.hasPermission(user, "SHUFFLE")): return
@@ -1599,31 +1603,9 @@ class Naoko(object):
             self.logger.debug("Adding video %s %s %s %s", title, site, vid, dur)
             self.stExecute(package(self.asLeader, package(self.send, "am", [site, vid, self.filterString(title)[1], "http://i.ytimg.com/vi/%s/default.jpg" % (vid), dur])))
             if store:
-                self.sql_queue.append(package(self._sqlInsertVideo, site, vid, title, dur, nick))
+                self.sql_queue.append(package(self.dbclient.insertVideo, site, vid, title, dur, nick))
                 self.sqlAction.set()
     
-    # Imports all the videos in <filename>.lst
-    # An lst file is simply a plain text file containing a list of videos, one per line.
-    def importFile(self, filename, name=False):
-        if name:
-            name = self.filterString(name, True, False)[1]
-        f = False
-        try:
-            f = file("%s.lst" % (filename), "r")
-            user = SynchtubeUser(*self.selfUser)
-            user = user._replace(nick=name)
-            for line in f:
-                self.add("add", user, line, name!=False)
-                # Sleep between adds, otherwise the Youtube API could throttle her, resulting in unpredictable behaviour.
-                # This sleep results in the adds taking a very long time for long lists, which can be very annoying, use this function sparingly.
-                time.sleep(0.5)
-        except Exception as e:
-            print e
-            return
-        finally:
-            if f != False:
-                f.close()
-
     def lock(self, command, user, data):
         if not (user.mod or self.hasPermission(user, "LOCK")): return
         if self.room_info["lock?"] == (command == "lock"): return
@@ -1744,12 +1726,9 @@ class Naoko(object):
         self.sqlAction.set()
     
     def _quote(self, name):
-        if not name:
-            rows = self.dbclient.fetch("SELECT username, msg, timestamp FROM chat WHERE protocol = 'ST' AND username != ? AND msg NOT LIKE '/me%%' AND msg NOT LIKE '$%%' ORDER BY RANDOM() LIMIT 1", (self.name,))
-        else:
-            rows = self.dbclient.fetch("SELECT username, msg, timestamp FROM chat WHERE protocol = 'ST' AND username = ? COLLATE NOCASE AND msg NOT LIKE '/me%%' AND msg NOT LIKE '$%%' ORDER BY RANDOM() LIMIT 1", (name,))
-        if rows:
-            self.enqueueMsg("[%s  %s] %s" % (rows[0][0], datetime.fromtimestamp(rows[0][2] / 1000).isoformat(' '), rows[0][1])) 
+        row = self.dbclient.getQuote(name, self.name)
+        if row:
+            self.enqueueMsg("[%s  %s] %s" % (row[0], datetime.fromtimestamp(row[2] / 1000).isoformat(' '), row[1])) 
 
     # Kick a single user by their name.
     # Two special arguments -unnamed and -unregistered.
@@ -1765,7 +1744,7 @@ class Naoko(object):
                 if self.userlist[u].nick == "unnamed":
                     kicks.append(u)
             self.logger.info("Kicking %d unnamed users requested by %s", len(kicks), user.nick)
-            self.asLeader(package(self._kick, kicks))
+            self.asLeader(package(self._kickList, kicks))
             return
 
         if args[0].lower() == "-unregistered":
@@ -1788,7 +1767,7 @@ class Naoko(object):
         else:
             self.asLeader(package(self._kickUser, target.sid))
 
-    def _kick(self, kicks):
+    def _kickList(self, kicks):
         for k in kicks:
             self._kickUser(k, sendMessage=False)
 
@@ -1865,7 +1844,36 @@ class Naoko(object):
                 self.enqueueMsg("[%s] %s" % (query, out))
         else:
             self.enqueueMsg("Wolfram Alpha query failed.")
-    
+   
+    # Telnet commands
+    # Only callable through telnet
+
+    # Kicks everyone in the channel except Naoko.
+    def clearRoom(self):
+        self.stExecute(package(self.asLeader, package(self._kickList, (u for u in self.userlist.iterkeys() if u != self.sid))))
+
+    # Imports all the videos in <filename>.lst
+    # An lst file is simply a plain text file containing a list of videos, one per line.
+    def importFile(self, filename, name=False):
+        if name:
+            name = self.filterString(name, True, False)[1]
+        f = False
+        try:
+            f = file("%s.lst" % (filename), "r")
+            user = SynchtubeUser(*self.selfUser)
+            user = user._replace(nick=name)
+            for line in f:
+                self.add("add", user, line, name!=False)
+                # Sleep between adds, otherwise the Youtube API could throttle her, resulting in unpredictable behaviour.
+                # This sleep results in the adds taking a very long time for long lists, which can be very annoying, use this function sparingly.
+                time.sleep(0.5)
+        except Exception as e:
+            print e
+            return
+        finally:
+            if f != False:
+                f.close()
+
     # Parses the parameters common to several functions.
     # All returned values are lower case
     # Returns a lone unfiltered string, often a name or number, a title specified by -title and quotes, and
@@ -2065,35 +2073,17 @@ class Naoko(object):
         self.vidlist = newlist
         self.vidLock.release() 
 
-    def _sqlInsertBan(self, user, reason, time, modName):
-        auth = 0
-        # As found elsewhere, user.auth is unreliable.
-        if user.uid:
-            auth = 1
-        self.db_logger.debug("Inserting %s into bans", (reason, auth, user.nick, int(round(time*1000)), modName))
-        self.dbclient.executeDML("INSERT INTO bans VALUES(?, ?, ?, ?, ?)", (reason, auth, user.nick, int(round(time*1000)), modName))
-        self.dbclient.commit()
-
     # Marks a video with the specified flags.
     # 1 << 0    : Invalid video, may become valid in the future. Reset upon successful manual add.
     # 1 << 1    : Manually blacklisted video.
     def flagVideo(self, site, vid, flags):
-        self.sql_queue.append(package(self._flagVideo, site, vid, flags))
+        self.sql_queue.append(package(self.dbclient.flagVideo, site, vid, flags))
         self.sqlAction.set()
 
-    def _flagVideo(self, site, vid, flags):
-        self.db_logger.debug("Flagging %s:%s with flags %s", site, vid, bin(flags))
-        self.dbclient.executeDML("UPDATE videos SET flags=(flags | ?) WHERE type = ? AND id = ?", (flags, site, vid))
-        self.dbclient.commit()
-    
     # Remove flags from a video.
     def unflagVideo(self, site, vid, flags):
-        self.sql_queue.append(package(self._unflagVideo, site, vid, flags))
+        self.sql_queue.append(package(self.dbclient.unflagVideo, site, vid, flags))
         self.sqlAction.set()
-
-    def _unflagVideo(self, site, vid, flags):
-        self.dbclient.executeDML("UPDATE videos SET flags=(flags & ?) WHERE type = ? AND id = ?", (~flags, site, vid))
-        self.dbclient.commit()
 
     # Checks to see if the current video isn't invalid, blocked, or removed.
     # Also updates the duration if necessary to prevent certain types of annoying attacks on the room.
@@ -2156,25 +2146,12 @@ class Naoko(object):
         if sql:
             # The insert the video using the retrieved title and duration.
             # Trust the external APIs over the Synchtube playlist.
-            self.sql_queue.append(package(self._sqlInsertVideo, vi.site, vi.vid, title, dur, v.nick))
+            self.sql_queue.append(package(self.dbclient.insertVideo, vi.site, vi.vid, title, dur, v.nick))
             self.sqlAction.set()
 
-    def _sqlInsertVideo(self, site, vid, title, dur, nick):
-        self.db_logger.debug("Inserting %s into videos", (site, vid, int(dur * 1000), title, 0))
-        self.db_logger.debug("Inserting %s into video_stats", (site, vid, nick))
-        self.dbclient.executeDML("INSERT OR IGNORE INTO videos VALUES(?, ?, ?, ?, ?)", (site, vid, int(dur * 1000), title, 0))
-        self.dbclient.executeDML("INSERT INTO video_stats VALUES(?, ?, ?)", (site, vid, nick))
-        self.dbclient.commit()
-        self._unflagVideo(site, vid, 1)
-    
-    def _sqlInsertUserCount(self, timestamp, count):
-        self.db_logger.debug("Inserting %s into user_count", (timestamp, count))
-        self.dbclient.executeDML("INSERT INTO user_count VALUES(?, ?)", (timestamp, count))
-        self.dbclient.commit()
-        
     def _lastBans(self, nick, num):
+        rows = self.dbclient.getLastBans(nick, num)
         if not nick == "-all":
-            rows = self.dbclient.fetch("SELECT timestamp, reason, mod FROM bans WHERE uname = ? COLLATE NOCASE ORDER BY timestamp DESC LIMIT ?", (nick, num))
             if not rows:
                 self.enqueueMsg("No recorded bans for %s" % nick)
                 return
@@ -2185,7 +2162,6 @@ class Naoko(object):
             for r in rows:
                 self.enqueueMsg("%s by %s - %s" % (datetime.fromtimestamp(r[0] / 1000).isoformat(' '), r[2], r[1]))
         else:
-            rows = self.dbclient.fetch("SELECT timestamp, reason, uname, mod FROM bans ORDER BY timestamp DESC LIMIT ?", (num,))
             if not rows:
                 self.enqueueMsg("No recorded bans")
                 return
@@ -2194,7 +2170,7 @@ class Naoko(object):
             else:
                 self.enqueueMsg("Last ban:")
             for r in rows:
-                self.enqueueMsg("%s - %s by %s - %s" % (r[2], datetime.fromtimestamp(r[0] / 1000).isoformat(' '), r[3], r[1]))
+                self.enqueueMsg("%s - %s by %s - %s" % (r[3], datetime.fromtimestamp(r[0] / 1000).isoformat(' '), r[2], r[1]))
 
     def _addRandom(self, num, duration, title, user):
         self.logger.debug("Adding %d randomly selected videos, with title like %s, and duration no more than %s seconds, posted by user %s", num, title, duration, user)
@@ -2277,7 +2253,7 @@ class Naoko(object):
         if sendMessage:
             self.enqueueMsg("Banned %s: (%s)" % (self.userlist[sid].nick, reason))
         self.send("ban", sid)
-        self.sql_queue.append(package(self._sqlInsertBan, self.userlist[sid], reason, time.time(), modName))
+        self.sql_queue.append(package(self.dbclient.insertBan, self.userlist[sid], reason, time.time(), modName))
         self.sqlAction.set()
 
     # Perform pending pending leader actions.

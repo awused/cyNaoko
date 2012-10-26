@@ -260,6 +260,10 @@ V - Autosetskip
 --- Naoko Administrator Only ---
 These functions are only available to the administrator of Naoko through telnet.
 
+clearRoom()
+    Kicks everyone in the room. No exceptions except Naoko herself.
+    This function is a last resort for recovering access to rooms in unusual circumstances such as hanging connections.
+
 importFile(string filename, string name=None)
     Opens <filename>.lst, which is a text file containing a list of urls to vidoes (such as are accepted by $add), one per line.
     Adds every video after verifying it as if it were added by a user with the provided name. If no name is provided they will not be stored in the database.
