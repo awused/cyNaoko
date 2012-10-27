@@ -23,3 +23,6 @@ REPL_PORT = 5001
 # If the bot is having trouble staying connected it is still generally better to reduce your internet usage before
 # changing this setting. Do not set lower than one second or higher than 5 seconds.
 HEARTBEATS = 5
+
+# The domain name Naoko connects to. Right now only www.synchtube.com is going to work.
+DOMAIN = "www.synchtube.com"

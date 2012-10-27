@@ -60,7 +60,7 @@ addrandom X
 
 delete [-n X]
     Deletes the last X videos added by the user who calls this command up to a maximum of ten. This will not delete the currently playing video.
-    Due to how Synchtube handles adding videos for unregistered but named users, no unregistered users can delete their own videos, and this command is disabled for them.
+    Due to how Synchtube handles adding videos for unregistered but named users no unregistered users can delete their own videos and this command is disabled for them.
     More options are available to mods.
 
 lastban

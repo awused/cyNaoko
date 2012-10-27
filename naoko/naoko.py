@@ -12,7 +12,7 @@ import itertools
 import json
 import logging
 import random
-import sched, time
+import sched, time, math
 import socket
 import struct
 import threading
@@ -21,7 +21,6 @@ import re
 from urllib2 import Request, urlopen
 from collections import namedtuple, deque
 import ConfigParser
-import random
 from datetime import datetime
 import code
 
@@ -95,13 +94,12 @@ class Object(object):
 # second is uid, third is whether or not client is authenticated
 # fourth is avatar type, and so on.
 class Naoko(object):
-    _ST_IP = "173.255.204.78"
     _HEADERS = {'User-Agent' : 'NaokoBot',
                 'Accept' : 'text/html,application/xhtml+xml,application/xml;',
-                'Host' : 'www.synchtube.com',
+                'Host' : DOMAIN,
                 'Connection' : 'keep-alive',
-                'Origin' : 'http://www.synchtube.com',
-                'Referer' : 'http://www.synchtube.com'}
+                'Origin' : 'http://' + DOMAIN,
+                'Referer' : 'http://' + DOMAIN}
 
     # Bitmasks for hybrid mods.
     MASKS = {
@@ -133,40 +131,73 @@ class Naoko(object):
         "SHUFFLE"       : 1 << 2}
 
     def __init__(self, pipe=None):
-        self._getConfig()
-        self.thread = threading.currentThread()
-        self.closeLock = threading.Lock()
-        # Since the video list can be accessed by two threads synchronization is necessary
-        # This is currently only used to make nextVideo() thread safe
-        self.vidLock = threading.Lock()
-        self.thread.st = self
-        self.leader_queue = deque()
-        self.st_queue = deque()
-        self.stAction = threading.Event()
-        self.st_action_queue = deque()
+        # Initialize all loggers
         self.logger = logging.getLogger("stclient")
         self.logger.setLevel(LOG_LEVEL)
         self.chat_logger = logging.getLogger("stclient.chat")
         self.chat_logger.setLevel(LOG_LEVEL)
         self.irc_logger = logging.getLogger("stclient.irc")
         self.irc_logger.setLevel(LOG_LEVEL)
-        self.pending = {}
-        self.leader_sid = None
-        self.pendingToss = False
-        self.notGivingBack = False
-        self.tossing = True
-        self.deferredToss = 0
+       
+        # Seem to have some kind of role in os.terminate() from the watchdog
+        self.thread = threading.currentThread()
+        self.thread.st = self
+        self.thread.close = self.close
+
+        self._getConfig()
+
+        # If more than one thread attempts to close Naoko at the same time it will cause an error
+        self.closeLock = threading.Lock()
+        self.closing = threading.Event()
+        # Since the video list can be accessed by two threads synchronization is necessary
+        # This is currently only used to make nextVideo() thread safe
+        self.vidLock = threading.Lock()
+        
+        self._initHandlers()
+        self._initCommandHandlers()
+        self._initIRCCommandHandlers()
+        self._initPersistentSettings()
+
+        self.modList = set()
+        self.room_info = {}
+        self.vidlist = []
+        self.skipLevel = None
+        self.skips = deque(maxlen=3)
         self.muted = False
         self.doneInit = False
+        
+        # Workarounds for non-atomic operations
         self.verboseBanlist = False
         self.unbanTarget = None
-        self.banTracker = {}
-        self.modList = set()
         self.shuffleBump = False
-        self.last_quote = time.time() - 5
+
+        # Used to control taking and returning leader
+        self.leader_queue = deque()
+        self.leader_sid = None
+        # Stores the action that will be necessary to give back leader after Naoko is done with it
+        self.pendingToss = False
+        # Used to avoid handing back the leader when asLeader is called multiple times in quick succession
+        self.notGivingBack = False
+        self.tossing = False
+        self.deferredToss = 0
+        # Tracks whether she is leading
+        # Is not triggered when she is going to give the leader position back or turn tv mode back on
+        self.leading = threading.Event()
+         
+        # Pending kicks/bans to prevent duplicates
+        self.pending = {}
+
+        # Used to implement a three-strikes policy
+        self.banTracker = {}
+
+        # By default USER_COUNT_THROTTLE is 0 so this will have no effect
         self.userCountTime = time.time() - USER_COUNT_THROTTLE
         
-        # Keep all the state information together
+        # Used to avoid spamming chat or the playlist
+        self.last_random = time.time() - 5
+        self.last_quote = time.time() - 5
+       
+        # All the information related to playback state
         self.state = Object()
         self.state.state = 0
         self.state.current = None
@@ -174,12 +205,13 @@ class Naoko(object):
         self.state.pauseTime = -1.0
         self.state.dur = 0
         self.state.reason = None
-
-        self._initPersistentSettings()
+        # Tracks when she needs to update her playback status
+        # This is used to interrupt her timer as she is waiting for the end of a video
+        self.playerAction = threading.Event()
 
         if self.pw:
             self.logger.info("Attempting to login")
-            login_url = "http://www.synchtube.com/user/login"
+            login_url = "http://%s/user/login" % (DOMAIN)
             login_body = {'email' : self.name.encode('utf-8'), 'password' : self.pw.encode('utf-8')};
             login_data = urllib.urlencode(login_body)
             login_req = Request(login_url, data=login_data, headers=self._HEADERS)
@@ -194,7 +226,7 @@ class Naoko(object):
                 self._HEADERS['Cookie'] = login_res_headers['Set-Cookie']
             self.logger.info("Login successful")
         
-        room_url = "http://www.synchtube.com/r/%s" % (self.room)
+        room_url = "http://%s/r/%s" % (DOMAIN, self.room)
         
         if self.room_pw:
             self.logger.info("Attempting to join password protected room.")
@@ -218,7 +250,7 @@ class Naoko(object):
         self.st_build      = getHiddenValue("st_build")
         self.userid        = getHiddenValue("room_userid")
 
-        config_url = "http://www.synchtube.com/api/1/room/%s" % (self.room)
+        config_url = "http://%s/api/1/room/%s" % (DOMAIN, self.room)
         config_info = urllib.urlopen(config_url).read()
         config = json.loads(config_info)
 
@@ -245,32 +277,27 @@ class Naoko(object):
             raise
         self.userlist = {}
         self.logger.info("Starting SocketIO Client")
-        self.client = SocketIOClient(self._ST_IP, self.port, "socket.io",
+        self.client = SocketIOClient(DOMAIN, self.port, "socket.io",
                                               self.config_params)
 
-        self._initHandlers()
-        self._initCommandHandlers()
-        self.room_info = {}
-        self.vidlist = []
-        self.thread.close = self.close
-        self.closing = threading.Event()
-        # Tracks when she needs to update her playback status
-        # This is used to interrupt her timer as she is waiting for the end of a video
-        self.playerAction = threading.Event()
-        # Prevent the SQL and API threads from busy-waiting
-        self.sqlAction = threading.Event()
-        self.apiAction = threading.Event()
-        # Tracks whether she is leading
-        # Is not triggered when she is going to give the leader position back or turn tv mode back on
-        self.leading = threading.Event()
+        # Various queues and events used to sychronize actions in separate threads
+        # Some are initialized with maxlen = 0 so they will silently discard actions meant for non-existent threads
+        self.st_queue = deque()
         self.irc_queue = deque(maxlen=0)
         self.sql_queue = deque(maxlen=0)
         self.api_queue = deque()
+        self.st_action_queue = deque()
+        # Events are used to prevent busy-waiting
+        self.sqlAction = threading.Event()
+        self.stAction = threading.Event()
+        self.apiAction = threading.Event()
 
+        # Initialize the clients that are always used
         self.apiclient = APIClient(self.apikeys)
         self.cbclient = CleverbotClient()
         self.client.connect()
-
+        
+        # Start the threads that are required for all normal operation
         self.chatthread = threading.Thread(target=Naoko._chatloop, args=[self])
         self.chatthread.start()
 
@@ -286,6 +313,7 @@ class Naoko(object):
         self.apithread = threading.Thread(target=Naoko._apiloop, args=[self])
         self.apithread.start()
 
+        # Start the optional threads
         if self.irc_nick:
             self.ircclient = False
             self.ircthread = threading.Thread(target=Naoko._ircloop, args=[self])
@@ -306,9 +334,11 @@ class Naoko(object):
         # the logger will still go to the the launching terminals
         # stdout/stderr, however print statements will probably be rerouted
         # to the socket.
+        # This is not checked by the healthcheck
         if REPL_PORT > 0:
             self.repl = Repl(port=REPL_PORT, host='localhost', locals={"naoko": self})
 
+        # Healthcheck loop, reports to the watchdog timer every 5 seconds
         while not self.closing.wait(5):
             # Sleeping first lets everything get initialized
             # The parent process will wait
@@ -380,7 +410,6 @@ class Naoko(object):
         self.irc_logger.info("Starting IRC Client")
         self.ircclient = client = IRCClient(self.server, self.channel, self.irc_nick, self.ircpw)
         self.irc_queue = deque()
-        self._initIRCCommandHandlers()
         failCount = 0
         while not self.closing.isSet():
             frame = deque(client.recvMessage().split('\n'))
@@ -456,7 +485,6 @@ class Naoko(object):
                     self.disableIRC("IRC connection closed due to %s. Restarting in 2 minutes." % (err))
                     time.sleep(2*60)
                     self.close()
-
         else:
             self.logger.info("IRC Loop Closed")
             self.close()
@@ -525,7 +553,6 @@ class Naoko(object):
         self.db_logger.setLevel(LOG_LEVEL)
         self.db_logger.info("Starting Database Client")
         self.dbclient = client = NaokoDB(self.dbfile)
-        self.last_random = time.time() - 5
         while self.sqlAction.wait():
             if self.closing.isSet(): break
             self.sqlAction.clear()
@@ -803,29 +830,6 @@ class Naoko(object):
             buf = json.dumps(buf, encoding="iso-8859-15")
         self.client.send(3, data=buf)
 
-    def asLeader(self, action=None, giveBack=True, deferred=0):
-        self.leader_queue.append(action)
-        if not self.doneInit: return
-        if giveBack and not self.pendingToss and not self.notGivingBack:
-            if self.leader_sid and self.leader_sid != self.sid:
-                oldLeader = self.leader_sid
-                self.pendingToss = True
-                self.deferredToss |= deferred
-                self.tossLeader = package(self._tossLeader, oldLeader)
-            if self.room_info["tv?"]:
-                self.pendingToss = True
-                self.deferredToss |= deferred
-                self.tossLeader = self._turnOnTV
-            if self.tossing:
-                self.pendingToss = True
-                self.deferredToss |= deferred
-        
-        if not giveBack: 
-            self.pendingToss = False
-            self.notGivingBack = True
-            self.deferredToss = 0
-        self.takeLeader()
-
     def _turnOnTV(self):
         # Short sleep to give Synchtube some time to react
         time.sleep(0.05)
@@ -835,16 +839,6 @@ class Naoko(object):
         self.unToss = package(self.send, "turnoff_tv")
         self.send("turnon_tv")
 
-    def changeLeader(self, sid):
-        if sid == self.leader_sid: return
-        if sid == self.sid:
-            self.takeLeader()
-            return
-        self.pendingToss = True
-        self.tossLeader = package(self._tossLeader, sid)
-        self.takeLeader()
-
-    # Checks the currently playing video against a provided API
     def checkVideo(self, vidinfo):
         if not self.checkVideoId(vidinfo):
             self.invalidVideo("Invalid video ID.")
@@ -1024,6 +1018,7 @@ class Naoko(object):
         userinfo.insert(1, 'unnamed')
         self._addUser(userinfo, isSelf)
         self.storeUserCount()
+        self.updateSkipLevel()
 
     def remUser(self, tag, data):
         try:
@@ -1033,6 +1028,7 @@ class Naoko(object):
         except KeyError:
             self.logger.exception("Failure to delete user %s from %s", data, self.userlist)
         self.storeUserCount()
+        self.updateSkipLevel()
 
     def users(self, tag, data):
         for u in data:
@@ -1050,17 +1046,10 @@ class Naoko(object):
             self.tossing = False
             self.leader_sid = None
             self.leading.clear()
-
-    def takeLeader(self):
-        if self.sid == self.leader_sid and not self.tossing:
-            self._leaderActions()
-            return
-        if self.tossing:
-            self.unToss()
-        elif self.room_info["tv?"]:
-            self.send("turnoff_tv")
-        else:
-            self.send("takeleader", self.sid)
+        if tag == "skip?" or tag == "vote_settings":
+            self.updateSkipLevel()
+        if tag == "num_votes":
+            self.checkSkip()
 
     def banlist(self, tag, data):
         if not self.unbanTarget:
@@ -1139,6 +1128,7 @@ class Naoko(object):
     # Setskip("none") will simply fail silently, so it is safe to call.
     def initDone(self, tag, data):
         self.storeUserCount()
+        self.updateSkipLevel()
         self.doneInit = True
 
         if self.autoLead:
@@ -1150,14 +1140,6 @@ class Naoko(object):
                 self.asLeader(fn)
             self.setSkip("", self.selfUser, self.autoSkip)
 
-    def storeUserCount(self, tag=None, data=None):
-        count = len(self.userlist)
-        storeTime = time.time()
-        if storeTime - self.userCountTime > USER_COUNT_THROTTLE:
-            self.userCountTime = storeTime
-            self.sql_queue.append(package(self.insertUserCount, count, storeTime))
-            self.sqlAction.set()
-    
     # Command handlers for commands that users can type in Synchtube chat
     # All of them receive input in the form (command, user, data)
     # Where command is the typed command, user is the user who sent the message
@@ -1951,6 +1933,27 @@ class Naoko(object):
         try: return (idx for idx, ele in enumerate(self.vidlist) if ele.v_sid == vid).next()
         except StopIteration: return -1
     
+    # Updates the required skip level
+    def updateSkipLevel(self):
+        if not self.doneInit: return
+        if not self.room_info["skip?"] or not "vote_settings" in self.room_info:
+            self.skipLevel = False
+            return
+        
+        if self.room_info["vote_settings"]["settings"] == "percent":
+            self.skipLevel = int(math.ceil(self.room_info["vote_settings"]["num"] * len(self.userlist) / 100.0))
+        else:
+            self.skipLevel = self.room_info["vote_settings"]["num"]
+    
+    # logs the user count to the database
+    def storeUserCount(self):
+        count = len(self.userlist)
+        storeTime = time.time()
+        if storeTime - self.userCountTime > USER_COUNT_THROTTLE:
+            self.userCountTime = storeTime
+            self.sql_queue.append(package(self.insertUserCount, count, storeTime))
+            self.sqlAction.set()
+    
     # Returns whether a specified user has the permission specified by the mask.
     def hasPermission(self, user, mask):
         # If hybrid mods are disabled or the user isn't logged in return False.
@@ -1959,7 +1962,13 @@ class Naoko(object):
         if n in self.hybridModList and (self.hybridModList[n] & self.MASKS[mask][0]):
             return True
         return False
-    
+   
+    def checkSkip(self):
+        if "num_votes" in self.room_info and self.room_info["num_votes"]["votes"] >= self.skipLevel:
+            self.skips.append(time.time())
+            if len(self.skips) == self.skips.maxlen and self.skips[-1] - self.skips[0] <= self.skips.maxlen * self.skip_interval: 
+                self.setSkip("",  self.selfUser, "off")
+
     # Returns whether or not a video id could possibly be valid
     # Guards against possible attacks and annoyances
     def checkVideoId(self, vi):
@@ -1982,6 +1991,50 @@ class Naoko(object):
         else:
             return False
 
+    def takeLeader(self):
+        if self.sid == self.leader_sid and not self.tossing:
+            self._leaderActions()
+            return
+        if self.tossing:
+            self.unToss()
+        elif self.room_info["tv?"]:
+            self.send("turnoff_tv")
+        else:
+            self.send("takeleader", self.sid)
+
+    def asLeader(self, action=None, giveBack=True, deferred=0):
+        self.leader_queue.append(action)
+        if not self.doneInit: return
+        if giveBack and not self.pendingToss and not self.notGivingBack:
+            if self.leader_sid and self.leader_sid != self.sid:
+                oldLeader = self.leader_sid
+                self.pendingToss = True
+                self.deferredToss |= deferred
+                self.tossLeader = package(self._tossLeader, oldLeader)
+            if self.room_info["tv?"]:
+                self.pendingToss = True
+                self.deferredToss |= deferred
+                self.tossLeader = self._turnOnTV
+            if self.tossing:
+                self.pendingToss = True
+                self.deferredToss |= deferred
+        
+        if not giveBack: 
+            self.pendingToss = False
+            self.notGivingBack = True
+            self.deferredToss = 0
+        self.takeLeader()
+
+    def changeLeader(self, sid):
+        if sid == self.leader_sid: return
+        if sid == self.sid:
+            self.takeLeader()
+            return
+        self.pendingToss = True
+        self.tossLeader = package(self._tossLeader, sid)
+        self.takeLeader()
+
+    # Checks the currently playing video against a provided API
     # Filters a string, removing invalid characters
     # Used to sanitize nicks or video titles for printing
     # Returns a boolean describing whether invalid characters were found
@@ -2297,6 +2350,7 @@ class Naoko(object):
         self.pw   = config.get("naoko", "pass")
         self.hmod_admin = config.get("naoko", "hmod_admin").lower()
         self.spam_interval = float(config.get("naoko", "spam_interval"))
+        self.skip_interval = float(config.get("naoko", "skip_interval"))
         self.server = config.get("naoko", "irc_server")
         self.channel = config.get("naoko", "irc_channel")
         self.irc_nick = config.get("naoko", "irc_nick")
