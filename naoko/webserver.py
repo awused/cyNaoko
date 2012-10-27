@@ -1,21 +1,59 @@
 #!/usr/bin/env python
 # A simple webserver for Naoko that serves up some interesting statistics.
 # In integrated mode this is started with Naoko and uses her instance of NaokoDB, though not the thread.
-from lib.external.bottle import route, run, default_app
+from lib.external.bottle import route, run, default_app, SimpleTemplate
+import logging
+from settings import *
+import time
+import threading
+from collections import deque
+
+def package(fn, *args, **kwargs):
+    def action():
+        fn(*args, **kwargs)
+    return action 
 
 class NaokoWebServer(object):
-    def __init__(self, dbclient, host, port, protocol):
-        self.dbclient = dbclient
+    dbclient = None
+    def __init__(self, db_queue, db_start, host, port, protocol):
+        self.logger = logging.getLogger("webserver")
+        self.logger.setLevel(LOG_LEVEL)
+        self.db_queue = db_queue
+        self.db_start = db_start
+        # Only one thread can access a connection object 
+        self.db_done = threading.Event()
+        # Avoid querying the database twice in a row
+        self.db_lock = threading.Lock()
         self.host = host
         self.port = port
         self.protocol = protocol
+        f = open("template.html", 'r')
+        self.template = SimpleTemplate(f)
+        f.close()
+        self.rendered = None
+        self.last_render = 0
 
     def render(self):
-        return "ur a faget"
+        if time.time() - self.last_render > 60 * 30:
+            self.db_lock.acquire()
+            if time.time() - self.last_render > 60 * 30:
+                self.getData()
+            self.db_lock.release()
+        return self.rendered
 
+    def getData(self):
+        self.logger.debug("Fetching new data from the database")
+        self.db_done.clear()
+        self.db_queue.append(self._getData)
+        self.db_start.set()
+        self.db_done.wait()
+        
     def _getData(self):
-        #self.dbclient.executeDML
-        pass
+        averageUsers = map(lambda (x, y): [int(x), y], NaokoWebServer.dbclient.getAverageUsers())
+        videoStats = map(lambda (x, y): [x.encode("utf-8"), y], NaokoWebServer.dbclient.getVideoStats())
+        self.rendered = self.template.render(users=averageUsers, videos=videoStats)
+        self.last_render = time.time()
+        self.db_done.set()    
 
     def start(self):
         route("/")(self.render)
@@ -24,6 +62,15 @@ class NaokoWebServer(object):
             WSGIServer(default_app(), bindAddress=(self.host, int(self.port))).run()
         elif self.protocol == "http":
             run(host=self.host, port=int(self.port))
+
+# Runs a dedicated thread for accessing the database
+def dbloop(dbfile, db_queue, db_signal):
+    from lib.database import NaokoDB
+    NaokoWebServer.dbclient = NaokoDB(dbfile)
+    while db_signal.wait():
+        db_signal.clear()
+        while db_queue:
+            db_queue.popleft()() 
 
 if __name__ == "__main__":
     # Standalone mode runs the webserver as a daemon
@@ -42,14 +89,19 @@ if __name__ == "__main__":
     assert dbfile and dbfile != ":memory:", "No database file"
 
     def startServer():
-        import logging
-        from lib.database import NaokoDB
         logging.basicConfig(format='%(name)-15s:%(levelname)-8s - %(message)s', stream=sys.__stderr__)
-        server = NaokoWebServer(NaokoDB(dbfile), host, port, protocol)
+        db_queue = deque()
+        db_signal = threading.Event()
+        dbthread = threading.Thread(target=dbloop, args=[dbfile, db_queue, db_signal])
+        dbthread.start()
+        server = NaokoWebServer(db_queue, db_signal, host, port, protocol)
         server.start()
     
     command = sys.argv[1] if len(sys.argv) > 1 else None
-    manageDaemon(startServer, command, sys.argv[0], "/tmp/naokoweb.pid", os.path.abspath(os.getcwd()))
+    if command == "debug":
+        startServer()
+    else:
+        manageDaemon(startServer, command, sys.argv[0], "/tmp/naokoweb.pid", os.path.abspath(os.getcwd()))
     
 else:
     import time
@@ -63,6 +115,7 @@ else:
         assert naoko.webserver_protocol == "http", "Embedded web server only supports http mode."
 
         naoko.logger.debug("Starting web server in embedded mode on %s:%s:%s." % (naoko.webserver_protocol, naoko.webserver_host, naoko.webserver_port))
-        server = NaokoWebServer(naoko.dbclient, naoko.webserver_host, naoko.webserver_port, naoko.webserver_protocol)
+        NaokoWebServer.dbclient = naoko.dbclient
+        server = NaokoWebServer(naoko.sql_queue, naoko.sqlAction, naoko.webserver_host, naoko.webserver_port, naoko.webserver_protocol)
         server.start()
 

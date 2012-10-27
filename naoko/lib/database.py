@@ -80,7 +80,8 @@ class NaokoDB(object):
         self.logger = logging.getLogger("database")
         self.logger.setLevel(LOG_LEVEL)
         self.db_file = database
-        self.con = sqlite3.connect(database)
+        # Set a generous timeout to avoid breaking if conflicting with the web server
+        self.con = sqlite3.connect(database, timeout=60)
         self._state = "open"
 
 
@@ -486,6 +487,31 @@ class NaokoDB(object):
 
         sql = select_cls + where_cls + order_cls
         return self.fetch(sql, binds)
+
+    def getAverageUsers(self):
+        """
+        Calculates the average users in the room during any given hour.
+
+        These values are cached by the web server.
+
+        TODO -- Think about storing these values in another table to speed up queries.
+        """
+        select_cls = "SELECT STRFTIME('%s', STRFTIME('%Y-%m-%dT%H:00', timestamp/1000, 'UNIXEPOCH'))*1000, CAST(ROUND(AVG(count)) AS INTEGER) FROM user_count "
+        group_cls = " GROUP BY STRFTIME('%Y%m%d%H', timestamp/1000, 'UNIXEPOCH')"
+        sql = select_cls + group_cls
+        return self.fetch(sql)
+
+    def getVideoStats(self):
+        """
+        Fetches an ordered list of users and the numbers of videos they've added.
+
+        Specifically ignores blacklisted videos but includes invalid ones.
+        """
+        select_cls = "SELECT uname, count(*) from video_stats vs, videos v "
+        where_cls = " WHERE vs.type = v.type AND vs.id = v.id AND NOT v.flags & 2 "
+        group_cls = " GROUP BY uname ORDER BY count(*) DESC"
+        sql = select_cls + where_cls + group_cls
+        return self.fetch(sql)
 
 # Run some tests if called directly
 # These probably don't work anymore
