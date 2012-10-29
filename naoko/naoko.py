@@ -277,7 +277,7 @@ class Naoko(object):
             raise
         self.userlist = {}
         self.logger.info("Starting SocketIO Client")
-        self.client = SocketIOClient(DOMAIN, self.port, "socket.io",
+        self.client = SocketIOClient(SOCKET_IP, self.port, "socket.io",
                                               self.config_params)
 
         # Various queues and events used to sychronize actions in separate threads

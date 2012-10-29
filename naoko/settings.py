@@ -26,3 +26,5 @@ HEARTBEATS = 5
 
 # The domain name Naoko connects to. Right now only www.synchtube.com is going to work.
 DOMAIN = "www.synchtube.com"
+# Need to hardcode Synchtube's IP
+SOCKET_IP = "173.255.204.78"
