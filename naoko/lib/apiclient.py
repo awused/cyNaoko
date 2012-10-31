@@ -102,7 +102,7 @@ class APIClient(object):
                 if startIndex == -1:
                     return None
 
-                return " ".join(data[data.find(startTag, startIndex) + len(startTag):data.find(endTag, startIndex)].split())
+                return " ".join(data[data.find(startTag, startIndex) + len(startTag):data.find(endTag, startIndex)].split()).replace("|","/")
         return None
 
     def _getWolframAPI(self, text):
@@ -128,7 +128,7 @@ class APIClient(object):
     # Soundcloud is the only site that does not include the ids in their URLs.
     def resolveSoundcloud(self, url):
         self.logger.debug("Resolving URL using the Soundcloud API.")
-        data = self._resolveSoundcloudAPI( url)
+        data = self._resolveSoundcloudAPI(url)
         if isinstance(data, dict) and not "errors" in data:
             if "location" in data:
                 return self._getSoundcloudID(data["location"])

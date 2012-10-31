@@ -1,0 +1,50 @@
+<html>
+<head>
+<link href="/static/css/naoko.css" rel="stylesheet" />
+<script type="text/javascript" src="//www.google.com/jsapi"></script>
+<script type="text/javascript" src="//ajax.googleapis.com/ajax/libs/jquery/1.7.1/jquery.min.js"></script>
+<script type="text/javascript">
+averageUsers = {{!averageUsers}};
+userVideoStats = [\\
+%for (x, y) in userVideoStats:
+["{{x}}", {{y}}],\\
+%end
+];
+userChatStats = [\\
+%for (x, y) in userChatStats:
+["{{x}}", {{y}}],\\
+%end
+];
+popularVideos = [\\
+%for (type, id, title, invalid, count) in popularVideos:
+["{{type}}", "{{id}}", "{{title}}", {{invalid}}, {{count}}],\\
+%end
+];
+</script>
+<script type="text/javascript" src="/static/js/naoko.js"></script>
+</head>
+<body>
+<h1>{{room}} Statistics</h1>
+<table>
+<tr>
+    <td>
+        <h2>Videos by User</h1>
+        <div id="user_video_div"></div>
+    </td>
+    <td>
+        <h2>Popular Videos</h1>
+        <div id="popular_video_div"></div>
+    </td>
+    <td>
+        <h2>Chat by User</h1>
+        <div id="user_chat_div"></div>
+    </td>
+</tr>
+<tr>
+    <td colspan=3>
+        <h2>Users Connected</h1>
+        <div id="average_user_div"></div>
+    </td>
+</td>
+</body>
+</html>

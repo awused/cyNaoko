@@ -501,17 +501,51 @@ class NaokoDB(object):
         sql = select_cls + group_cls
         return self.fetch(sql)
 
-    def getVideoStats(self):
+    def getUserVideoStats(self):
         """
         Fetches an ordered list of users and the numbers of videos they've added.
 
         Specifically ignores blacklisted videos but includes invalid ones.
         """
-        select_cls = "SELECT uname, count(*) from video_stats vs, videos v "
+        select_cls = "SELECT uname, count(*) FROM video_stats vs, videos v "
         where_cls = " WHERE vs.type = v.type AND vs.id = v.id AND NOT v.flags & 2 "
         group_cls = " GROUP BY uname ORDER BY count(*) DESC"
         sql = select_cls + where_cls + group_cls
         return self.fetch(sql)
+
+    def getUserChatStats(self):
+        """
+        Fetches the number of chat messages sent by each user.
+        """
+        select_cls = "SELECT username, count(*) FROM chat "
+        group_cls = " GROUP BY username ORDER BY count(*) DESC"
+        sql = select_cls + group_cls
+        return self.fetch(sql)
+
+    def getPopularVideos(self, n=10):
+        """
+        Fetches the n most popular videos.
+
+        Ignores blacklisted videos, but returns invalid videos with a flag.
+        """
+        select_cls = "SELECT v.type, v.id, v.title, v.flags & 1, count(*) FROM videos v, video_stats vs "
+        where_cls = " WHERE vs.type = v.type AND vs.id = v.id AND NOT v.flags & 2 "
+        group_cls = " GROUP BY v.type, v.id ORDER BY count(*) DESC LIMIT ?"
+        binds = (n,)
+        sql = select_cls + where_cls + group_cls
+        return self.fetch(sql, binds)
+
+    def getMessageCounts(self):
+        """
+        Fetches the ten most popular messages.
+
+        Currently case-sensitive, may change.
+        """
+        select_cls = "SELECT msg, count(*) FROM chat "
+        group_cls = " GROUP BY msg ORDER BY count(*) DESC LIMIT 10"
+        sql = select_cls + group_cls
+        return self.fetch(sql)
+
 
 # Run some tests if called directly
 # These probably don't work anymore

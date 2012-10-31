@@ -1,11 +1,12 @@
 #!/usr/bin/env python
 # A simple webserver for Naoko that serves up some interesting statistics.
 # In integrated mode this is started with Naoko and uses her instance of NaokoDB, though not the thread.
-from lib.external.bottle import route, run, default_app, SimpleTemplate
+from lib.external.bottle import route, run, default_app, SimpleTemplate, static_file
 import logging
 from settings import *
 import time
 import threading
+import os.path
 from collections import deque
 
 def package(fn, *args, **kwargs):
@@ -15,7 +16,7 @@ def package(fn, *args, **kwargs):
 
 class NaokoWebServer(object):
     dbclient = None
-    def __init__(self, db_queue, db_start, host, port, protocol):
+    def __init__(self, db_queue, db_start, host, port, protocol, room):
         self.logger = logging.getLogger("webserver")
         self.logger.setLevel(LOG_LEVEL)
         self.db_queue = db_queue
@@ -27,10 +28,11 @@ class NaokoWebServer(object):
         self.host = host
         self.port = port
         self.protocol = protocol
-        f = open("template.html", 'r')
+        self.room = room
+        f = open(os.path.join("web","template.html"), 'r')
         self.template = SimpleTemplate(f)
         f.close()
-        self.rendered = None
+        self.cache = None
         self.last_render = 0
 
     def render(self):
@@ -41,6 +43,9 @@ class NaokoWebServer(object):
             self.db_lock.release()
         return self.rendered
 
+    def static(self, path):
+        return static_file(path, root=os.path.join("web", "static"))
+
     def getData(self):
         self.logger.debug("Fetching new data from the database")
         self.db_done.clear()
@@ -48,14 +53,25 @@ class NaokoWebServer(object):
         self.db_start.set()
         self.db_done.wait()
         
-    def _getData(self):
+    # Takes 4-5 seconds to get everything
+    # If performance is a problem possible solutions are:
+    # 1: ajax calls + appears more responsive to the user, not just sitting on a blank page
+    #       - more http requests will be extremely slow on the bottle.py http server, still puts heavy load on the sqlite database
+    # 2: precalculation/running totals in the database + faster, no extra calls, extra load on the database in negligible, potentially serve new data with every request
+    #       - complicates database more, requires extra tables and additional columns, initial database upgrade may take a very long time, much more difficult to change decisions later
+    def _getData(self): 
         averageUsers = map(lambda (x, y): [int(x), y], NaokoWebServer.dbclient.getAverageUsers())
-        videoStats = map(lambda (x, y): [x.encode("utf-8"), y], NaokoWebServer.dbclient.getVideoStats())
-        self.rendered = self.template.render(users=averageUsers, videos=videoStats)
+        userVideoStats = NaokoWebServer.dbclient.getUserVideoStats()
+        userChatStats = NaokoWebServer.dbclient.getUserChatStats()
+        popularVideos = NaokoWebServer.dbclient.getPopularVideos()
+        # Takes 20+ seconds alone on a 100mb database, unacceptable
+        #messageStats = NaokoWebServer.dbclient.getMessageCounts()
+        self.rendered = self.template.render(averageUsers=averageUsers, userChatStats=userChatStats, popularVideos=popularVideos, userVideoStats=userVideoStats, room=self.room)
         self.last_render = time.time()
         self.db_done.set()    
 
     def start(self):
+        route('/static/<path:path>')(self.static)
         route("/")(self.render)
         if self.protocol == "fastcgi":
             from flup.server.fcgi import WSGIServer
@@ -85,6 +101,7 @@ if __name__ == "__main__":
     host = config.get("naoko", "webserver_host")
     port = config.get("naoko", "webserver_port")
     protocol = config.get("naoko", "webserver_protocol")
+    room = config.get("naoko", "room")
     assert mode == "standalone", "Web server not set to standalone mode"
     assert dbfile and dbfile != ":memory:", "No database file"
 
@@ -94,7 +111,7 @@ if __name__ == "__main__":
         db_signal = threading.Event()
         dbthread = threading.Thread(target=dbloop, args=[dbfile, db_queue, db_signal])
         dbthread.start()
-        server = NaokoWebServer(db_queue, db_signal, host, port, protocol)
+        server = NaokoWebServer(db_queue, db_signal, host, port, protocol, room)
         server.start()
     
     command = sys.argv[1] if len(sys.argv) > 1 else None
@@ -116,6 +133,6 @@ else:
 
         naoko.logger.debug("Starting web server in embedded mode on %s:%s:%s." % (naoko.webserver_protocol, naoko.webserver_host, naoko.webserver_port))
         NaokoWebServer.dbclient = naoko.dbclient
-        server = NaokoWebServer(naoko.sql_queue, naoko.sqlAction, naoko.webserver_host, naoko.webserver_port, naoko.webserver_protocol)
+        server = NaokoWebServer(naoko.sql_queue, naoko.sqlAction, naoko.webserver_host, naoko.webserver_port, naoko.webserver_protocol, naoko.room)
         server.start()
 
