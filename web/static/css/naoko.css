@@ -1,1 +1,20 @@
-/* CSS GOES HERE */
+body, .main {
+    align: center;
+    margin:0 auto;
+}
+.main {
+    width: 95%;
+}
+body {
+    width: 100%;
+}
+h1, h2 {
+    text-align: center;
+}
+.popular_video_td {
+    max-width: 33%;
+}
+#average_user_div {
+    height: 450px;
+    width: 100%;
+}

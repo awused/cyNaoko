@@ -25,18 +25,29 @@ popularVideos = [\\
 </head>
 <body>
 <h1>{{room}} Statistics</h1>
-<table>
+<table class="main">
 <tr>
     <td>
         <h2>Videos by User</h1>
-        <div id="user_video_div"></div>
     </td>
-    <td>
+    <td class="popular_video_td">
         <h2>Popular Videos</h1>
-        <div id="popular_video_div"></div>
     </td>
     <td>
         <h2>Chat by User</h1>
+    </td>
+</tr>
+<tr>
+    <td>
+        <div id="user_video_div"></div>
+    </td>
+    <td class="popular_video_td">
+        <div id="popular_video_div">
+            <table id="popular_video_table">
+                <thead><tr>
+                    <td>Videos</td><td>Frequency</td></tr></thead><tbody></tbody></table></div>
+    </td>
+    <td>
         <div id="user_chat_div"></div>
     </td>
 </tr>
