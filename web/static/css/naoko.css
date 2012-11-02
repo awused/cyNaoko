@@ -5,14 +5,27 @@ body, .main {
 .main {
     width: 95%;
 }
+.main > tbody > tr > td {
+    width: 33%;
+    background-color: #404040;
+}
 body {
     width: 100%;
 }
 h1, h2 {
     text-align: center;
 }
-.popular_video_td {
-    max-width: 33%;
+html {
+    background-color: #303030;
+    font-family:"Arial", sans-serif;
+    color: white;
+}
+a:link {color: #ffffff;}
+a:active {color: #000000;}
+a:visited {color: #808080;}
+a:hover {color: #b0b0b0;}
+#popular_video_table tbody tr:nth-child(odd){
+    background-color: #484848;
 }
 #average_user_div {
     height: 450px;
