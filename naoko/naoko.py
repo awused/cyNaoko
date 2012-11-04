@@ -422,7 +422,7 @@ class Naoko(object):
                     msg = data[data.find("PRIVMSG " + self.channel + " :") + len("PRIVMSG " + self.channel + " :"):]
                     if not name == self.irc_nick:
                         self.st_queue.append("(" + name + ") " + msg)
-                        self.chatCommand(IRCUser(*(name, False, False)), msg, True)
+                        self.chatCommand(IRCUser(*(name, False, 1)), msg, True)
                     self.irc_logger.info("IRC %r:%r", name, msg)
                 # Currently ignore messages sent directly to her
                 elif data.find("PRIVMSG " + self.irc_nick + " :") != -1:
