@@ -406,7 +406,7 @@ class Naoko(object):
 
     # Responsible for communicating with IRC
     def _ircloop(self):
-        time.sleep(5)
+        time.sleep(3)
         self.irc_logger.info("Starting IRC Client")
         self.ircclient = client = IRCClient(self.server, self.channel, self.irc_nick, self.ircpw)
         self.irc_queue = deque()
@@ -1580,7 +1580,7 @@ class Naoko(object):
         if valid:
             self.logger.debug("Adding video %s %s %s %s", title, site, vid, dur)
             self.stExecute(package(self.asLeader, package(self.send, "am", [site, vid, self.filterString(title)[1], "http://i.ytimg.com/vi/%s/default.jpg" % (vid), dur])))
-            if store:
+            if store and not dur == 0:
                 self.sql_queue.append(package(self.insertVideo, site, vid, title, dur, nick))
                 self.sqlAction.set()
     
@@ -2160,8 +2160,13 @@ class Naoko(object):
                     return
                 # When someone has manually added a video with an incorrect duration.
                 elif self.state.dur != dur:
-                    self.logger.debug("Duration mismatch: %d expected, %.3f actual." % (self.state.dur, dur))
-                    self.state.dur = dur
+                    if vi.site == "yt" and dur == 0:
+                        # Live Youtube stream
+                        self.logger.debug("Live Youtube stream detected.")
+                        self.state.dur = DEFAULT_WAIT
+                    else:
+                        self.logger.debug("Duration mismatch: %d expected, %.3f actual." % (self.state.dur, dur))
+                        self.state.dur = dur
                     self.playerAction.set()
             return
         self.invalidVideo("Invalid video.")
@@ -2253,7 +2258,7 @@ class Naoko(object):
         # Synchtube will sometimes send durations as strings.
         try:
             v[0][4] = int(v[0][4])
-            if v[0][4] < 0:
+            if v[0][4] <= 0:
                 v[0][4] = 60
         except (ValueError, TypeError) as e:
             # Something invalid, set a default duration of one minute.
