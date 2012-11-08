@@ -1734,7 +1734,7 @@ class Naoko(object):
                 if self.userlist[u].uid == None:
                     kicks.append(u)
             self.logger.info("Kicking %d unregistered users requested by %s", len(kicks), user.nick)
-            self.asLeader(package(self._kick, kicks))
+            self.asLeader(package(self._kickList, kicks))
             return
 
         target = self.getUserByNick(args[0])
