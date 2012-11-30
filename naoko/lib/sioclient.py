@@ -222,8 +222,11 @@ class SocketIOClient(object):
                                           resource,
                                           self.protocol,
                                           urlencode(params))
-        self.hbthread = threading.Thread(target=SocketIOClient._heartbeat, args=[self])
+        self.connectTime = time.time()
+        self.doneInit = False
 
+        self.hbthread = threading.Thread(target=SocketIOClient._heartbeat, args=[self])
+        
     def _heartbeat(self):
         self.sendHeartBeat(HEARTBEATS)
         self.sched.run()
@@ -258,6 +261,10 @@ class SocketIOClient(object):
             raise Exception("Socket.IO Timeout, %.3f since last heartbeat" % (hb_diff))
         self.send(2, log=False)
         self.send(3, data='{}', log=False)
+
+        # Logic to detect a ghost room
+        if not self.doneInit and time.time() - self.connectTime > 30:
+            raise Exception("Ghost room detected. Attempting to reconnect")
 
     def connect(self):
         sid =  self.__getSessionInfo()

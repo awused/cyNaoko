@@ -1130,6 +1130,7 @@ class Naoko(object):
         self.storeUserCount()
         self.updateSkipLevel()
         self.doneInit = True
+        self.client.doneInit = True
 
         if self.autoLead:
             self.asLeader(package(self.setSkip, "",  self.selfUser, self.autoSkip), False)
