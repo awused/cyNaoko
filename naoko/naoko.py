@@ -1829,7 +1829,10 @@ class Naoko(object):
 
     # Kicks everyone in the channel except Naoko.
     def clearRoom(self, kickSelf=False):
-        self.stExecute(package(self.asLeader, package(self._kickList, (u for u in self.userlist.iterkeys() if kickSelf or u != self.sid))))
+        kill = [u for u in self.userlist.iterkeys() if u != self.sid]
+        if kickSelf:
+            kill.append(self.sid)
+        self.stExecute(package(self.asLeader, package(self._kickList, kill)))
 
     # Imports all the videos in <filename>.lst
     # An lst file is simply a plain text file containing a list of videos, one per line.

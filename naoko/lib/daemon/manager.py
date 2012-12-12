@@ -15,7 +15,8 @@ class MyDaemon(Daemon):
 # pidfile : the file used to store the pid
 # stdio : a tuple or list of up to three strings specificying files for stdin, stdout, and stderr for the daemon. They default to /dev/null
 # wd : the working directory for the daemon process
-# arguments : a tuple or list of arguments for the target
+# args : a tuple or list of arguments for the target
+# kwargs : a dictionary of keyword arguments for the target
 # This does not fail silently and communicates to the user over stdout.
 # This should not be used as a component of something larger unless you know exactly what you're doing.
 def manageDaemon(target, command, filename="manager",  pidfile="/tmp/daemon-example.pid", wd="/",  stdio=[], args=[], kwargs={}):
