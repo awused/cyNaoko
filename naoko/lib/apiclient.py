@@ -127,6 +127,7 @@ class APIClient(object):
     # Resolve a Soundcloud URL into usable track information.
     # Soundcloud is the only site that does not include the ids in their URLs.
     def resolveSoundcloud(self, url):
+        if not self.keys.sc_id: return False
         self.logger.debug("Resolving URL using the Soundcloud API.")
         data = self._resolveSoundcloudAPI(url)
         if isinstance(data, dict) and not "errors" in data:

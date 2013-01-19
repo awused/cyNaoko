@@ -515,6 +515,11 @@ class Naoko(object):
     def _playloop(self):
         while self.leading.wait():
             if self.closing.isSet(): break
+            if not self.doneInit:
+                # When the room is initalizing, leader comes before cm
+                # If Naoko is the only one in the room, and therefore leader on connection, this will result in non-deterministic behaviour
+                time.sleep(0.01)
+                continue
             sleepTime = self.state.dur + (self.state.time / 1000) - time.time() + 1
             if sleepTime < 0:
                 sleepTime = 0
@@ -1116,7 +1121,7 @@ class Naoko(object):
         else:
             # Currently the only two blacklisted phrases are links to other Synchtube rooms.
             # Links to the current room or the Synchtube homepage aren't blocked.
-            m = re.search(r"(synchtube\.com\/r\/|synchtu\.be\/|clickbank\.net)(%s)?" % (self.room), msg, re.IGNORECASE)
+            m = re.search(r"(synchtube\.com\/r\/|synchtu\.be\/|clickbank\.net|\/muppet\/images\/4\/48\/LookAtMeBook\.jpg)(%s)?" % (self.room), msg, re.IGNORECASE)
             if m and not m.groups()[1]:
                 self.logger.info("Attempted kick/ban of %s for blacklisted phrase", user.nick)
                 reason = "%s sent a blacklisted message" % (user.nick)
@@ -1594,6 +1599,8 @@ class Naoko(object):
             if store and not dur == 0:
                 self.sql_queue.append(package(self.insertVideo, site, vid, title, dur, nick))
                 self.sqlAction.set()
+        else:
+            self.logger.debug("Invalid video %s %s %s, unable to add.", title, site, vid)
     
     def lock(self, command, user, data):
         if not (user.mod or self.hasPermission(user, "LOCK")): return
@@ -1858,7 +1865,7 @@ class Naoko(object):
                 self.add("add", user, line, name!=False)
                 # Sleep between adds, otherwise the Youtube API could throttle her, resulting in unpredictable behaviour.
                 # This sleep results in the adds taking a very long time for long lists, which can be very annoying, use this function sparingly.
-                time.sleep(0.5)
+                time.sleep(1)
         except Exception as e:
             print e
             return
@@ -2140,13 +2147,21 @@ class Naoko(object):
     # 1 << 0    : Invalid video, may become valid in the future. Reset upon successful manual add.
     # 1 << 1    : Manually blacklisted video.
     def flagVideo(self, site, vid, flags):
-        self.sql_queue.append(package(self.dbclient.flagVideo, site, vid, flags))
+        self.sql_queue.append(package(self._flagVideo, site, vid, flags))
         self.sqlAction.set()
 
+    # Wrapper
+    def _flagVideo(self, *args, **kwargs):
+        self.dbclient.flagVideo(*args, **kwargs)
+        
     # Remove flags from a video.
     def unflagVideo(self, site, vid, flags):
-        self.sql_queue.append(package(self.dbclient.unflagVideo, site, vid, flags))
+        self.sql_queue.append(package(self._unflagVideo, site, vid, flags))
         self.sqlAction.set()
+
+    # Wrapper
+    def _unflagVideo(self, *args, **kwargs):
+        self.dbclient.unflagVideo(*args, **kwargs)
 
     # Wrapper for dbclient.insertVideo
     def insertVideo(self, *args, **kwargs):
@@ -2212,9 +2227,7 @@ class Naoko(object):
             self.logger.debug("Invalid video, skipping SQL insert.")
             self.logger.debug(data)
             # Flag the video as invalid.
-            # TEMPORARY IF STATEMENT
-            if vi.vid.find("whatisthis") == -1:
-                self.flagVideo(vi.site, vi.vid, 1)
+            self.flagVideo(vi.site, vi.vid, 1)
             # Go even further and remove it from the playlist completely
             if echo:
                 self.enqueueMsg("Invalid video removed.")
