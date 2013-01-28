@@ -764,12 +764,12 @@ class Naoko(object):
             if not self.vidlist or (len(self.vidlist) == 1 and videoIndex >= 0):
                 self.logger.debug("Empty list, playing default video.")
                 # Hardcoded video.
-                self.send("cm", ["yt", "hGqyJmlJ-MY", u"\u304a\u3061\u3083\u3081\u6a5f\u80fd\u3092\u9ed2\u5b50\u3063\u307d\u304f\u6b4c\u3063\u3066\u307f\u305f" ,"http://i.ytimg.com/vi/hGqyJmlJ-MY/default.jpg", 92])
+                self.send("cm", ["yt", "qnc-YUfXanw", u"Bad touhou doujin plot" ,"http://i.ytimg.com/vi/qnc-YUfXanw/default.jpg", 44])
                 self.sql_queue.append(package(self.addRandom, "addrandom", self.selfUser, ""))
                 self.sqlAction.set()
             # TEMPORARY
             elif len(self.vidlist) == 1:
-                self.send("cm", ["yt", "hGqyJmlJ-MY", u"\u304a\u3061\u3083\u3081\u6a5f\u80fd\u3092\u9ed2\u5b50\u3063\u307d\u304f\u6b4c\u3063\u3066\u307f\u305f" ,"http://i.ytimg.com/vi/hGqyJmlJ-MY/default.jpg", 92])
+                self.send("cm", ["yt", "qnc-YUfXanw", u"Bad touhou doujin plot" ,"http://i.ytimg.com/vi/qnc-YUfXanw/default.jpg", 44])
                 self.sql_queue.append(package(self.addRandom, "addrandom", self.selfUser, ""))
                 self.sqlAction.set()
             else: 
@@ -1172,7 +1172,7 @@ class Naoko(object):
     
     # Set the skipping mode. Takes either on, off, x, or x%.
     def setSkip(self, command, user, data):
-        if not (user.mod or self.hasPermission(user, "SKIP")): return
+        if not (user.mod or self.hasPermission(user, "SETSKIP")): return
         m = re.match("^((on)|(off)|([1-9][0-9]*)(%)?)( .*)?$", data, re.IGNORECASE)
         if m:
             g = m.groups()
