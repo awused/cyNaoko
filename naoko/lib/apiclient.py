@@ -191,6 +191,11 @@ class APIClient(object):
             # Many things can go wrong with an HTTP request or during JSON parsing
             self.logger.warning("Error retrieving Youtube API information.")
             self.logger.debug(e)
+            # Treat a communication failure as Unknown and assume the video will play
+            # The video will not be recorded or flagged as invalid
+            # -- TODO -- Possibly treat other API failures as unknown. Youtube is the most common and I have not 
+            # looked at the other APIs as much.
+            data = "Unknown"
         finally:
             con.close()
             return data

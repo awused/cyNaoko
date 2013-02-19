@@ -130,7 +130,7 @@ class Naoko(object):
         "UNBAN"         : 1 << 1,
         "SHUFFLE"       : 1 << 2}
 
-    def __init__(self, pipe=None):
+    def __init__(self, wasKicked, pipe=None):
         # Initialize all loggers
         self.logger = logging.getLogger("stclient")
         self.logger.setLevel(LOG_LEVEL)
@@ -192,7 +192,12 @@ class Naoko(object):
 
         # By default USER_COUNT_THROTTLE is 0 so this will have no effect
         self.userCountTime = time.time() - USER_COUNT_THROTTLE
-        
+       
+        # If we were kicked try to take back the room forcibly
+        # May result in weirdness
+        self.wasKicked = wasKicked
+        self.beingKicked = False
+
         # Used to avoid spamming chat or the playlist
         self.last_random = time.time() - 5
         self.last_quote = time.time() - 5
@@ -361,8 +366,12 @@ class Naoko(object):
                 self.close()
         else:
             if pipe:
-                self.logger.warn("Restarting")
-                pipe.send("RESTART")
+                if self.beingKicked:
+                    self.logger.warn("Kicked")
+                    pipe.send("KICKED")
+                else:
+                    self.logger.warn("Restarting")
+                    pipe.send("RESTART")
 
     # Responsible for listening to communication from Synchtube
     def  _stlistenloop(self):
@@ -651,7 +660,8 @@ class Naoko(object):
                          "shuffle"          : self.shuffle,
                          "initdone"         : self.initDone,
                          "clear"            : self.clear,
-                         "banlist"          : self.banlist}
+                         "banlist"          : self.banlist,
+                         "kick"             : self.kicked}
 
     def _initCommandHandlers(self):
         self.commandHandlers = {"restart"           : self.restart,
@@ -1054,10 +1064,14 @@ class Naoko(object):
         self.sid = data[0]
         if not self.pw:
             self.send("nick", self.name)
+        if self.wasKicked:
+            self.takeLeader()
 
     def roomSetting(self, tag, data):
         self.room_info[tag] = data
         if tag == "tv?" and self.room_info["tv?"]:
+            if self.leader_sid == self.sid:
+                self.wasKicked = False
             self.tossing = False
             self.leader_sid = None
             self.leading.clear()
@@ -1095,6 +1109,10 @@ class Naoko(object):
                 if not self.deferredToss:
                     self.tossLeader()
 
+    def kicked(self, tag, data):
+        self.beingKicked = True
+        self.close()
+
     def chat(self, tag, data):
         sid = data[0]
         user = self.userlist[sid]
@@ -1121,7 +1139,7 @@ class Naoko(object):
         else:
             # Currently the only two blacklisted phrases are links to other Synchtube rooms.
             # Links to the current room or the Synchtube homepage aren't blocked.
-            m = re.search(r"(synchtube\.com\/r\/|synchtu\.be\/|clickbank\.net|\/muppet\/images\/4\/48\/LookAtMeBook\.jpg)(%s)?" % (self.room), msg, re.IGNORECASE)
+            m = re.search(r"(synchtube\.com\/r\/|synchtu\.be\/|clickbank\.net|\/muppet\/images\/4\/48\/LookAtMeBook\.jpg|chaturbate\.com)(%s)?" % (self.room), msg, re.IGNORECASE)
             if m and not m.groups()[1]:
                 self.logger.info("Attempted kick/ban of %s for blacklisted phrase", user.nick)
                 reason = "%s sent a blacklisted message" % (user.nick)
@@ -1131,7 +1149,7 @@ class Naoko(object):
         self.logger.debug("Leader is %s", self.userlist[data])
         self.leader_sid = data
         self.tossing = False
-        if self.leader_sid == self.sid:
+        if self.leader_sid == self.sid and not self.wasKicked:
             toss = self.pendingToss
             self._leaderActions()
             if not toss:
@@ -1155,6 +1173,10 @@ class Naoko(object):
                     return
                 self.asLeader(fn)
             self.setSkip("", self.selfUser, self.autoSkip)
+        
+        # TEMPORARY
+        if not self.playlist:
+            self.magic()
 
     # Command handlers for commands that users can type in Synchtube chat
     # All of them receive input in the form (command, user, data)
@@ -2013,6 +2035,12 @@ class Naoko(object):
             return False
 
     def takeLeader(self):
+        if self.wasKicked:
+            self.send("takeleader", self.sid)
+            self.send("turnon_tv")
+            time.sleep(0.0001)
+            self.send("turnon_tv")
+            return
         if self.sid == self.leader_sid and not self.tossing:
             self._leaderActions()
             return

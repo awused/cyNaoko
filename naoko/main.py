@@ -12,6 +12,8 @@ from settings import *
 # Don't fork too often
 MIN_DUR = 2.5
 
+kicked = False
+
 # Set up logging
 logging.basicConfig(format='%(name)-15s:%(levelname)-8s - %(message)s', stream=sys.__stderr__)
 logger = logging.getLogger("socket.io client")
@@ -25,14 +27,14 @@ class throttle:
 
     def __call__ (self, *args, **kwargs):
         remaining = MIN_DUR - time.time() + self.last_call
-        if remaining > 0:
+        if not kicked and remaining > 0:
             time.sleep(remaining)
         self.last_call = time.time()
         self.fn(*args, **kwargs)
 
 def spawn(script):
     (pipe_in, pipe_out) = Pipe(False)
-    p = Process(target=script, args=(pipe_out,))
+    p = Process(target=script, args=(kicked, pipe_out,))
     p.daemon = True # If the main process crashes for any reason then kill the child process
     p.start()
     pipe_out.close()
@@ -41,7 +43,9 @@ def spawn(script):
 @throttle
 def run(script):
     global child
+    global kicked
     (child_pipe, child) = spawn (script)
+    kicked = False
     print "[%s] Forked off (%d)\n" % (name, child.pid)
     try:
         while child_pipe.poll(TIMEOUT):
@@ -51,6 +55,10 @@ def run(script):
                 break
             elif buf == "HEALTHY":
                 continue
+            elif buf == "KICKED":
+                print "Kicked, attempting recovery"
+                kicked = False
+                break
             else:
                 raise Exception("Received invalid message (%s)"% (buf))
     except EOFError:
