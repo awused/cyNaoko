@@ -235,11 +235,21 @@ class Naoko(object):
         
         if self.room_pw:
             self.logger.info("Attempting to join password protected room.")
-            room_body = {'personalpassword' : self.room_pw.encode('utf-8')};
-            room_data = urllib.urlencode(room_body)
-            room_req = Request(room_url, data=room_data, headers=self._HEADERS)
-        else:
-            room_req = Request(room_url, headers=self._HEADERS)
+            room_pw_body = {'password' : self.room_pw.encode('utf-8')};
+            room_pw_data = urllib.urlencode(room_pw_body)
+            room_pw_req = Request(room_url+'/password', data=room_pw_data, headers=self._HEADERS)
+            room_pw_res = urlopen(room_pw_req)
+            room_pw_res_headers = room_pw_res.info()
+            if room_pw_res_headers['Status'][:3] != '200': 
+                raise Exception("Could not join password protected room, check room name (case-sensitive)")
+            
+            if "Incorrect password!" in room_pw_res.read():
+                raise Exception("Incorrect room password supplied")
+            
+            self.logger.info("Joined password protected room")
+
+        room_req = Request(room_url, headers=self._HEADERS)
+
         
         room_res = urlopen(room_req)
         room_res_body = room_res.read()
@@ -1099,7 +1109,8 @@ class Naoko(object):
                     self.tossLeader()
 
     def kicked(self, tag, data):
-        self.beingKicked = True
+        if self.doneInit:
+            self.beingKicked = True
         self.close()
 
     def chat(self, tag, data):
@@ -1128,7 +1139,7 @@ class Naoko(object):
         else:
             # Currently the only two blacklisted phrases are links to other Synchtube rooms.
             # Links to the current room or the Synchtube homepage aren't blocked.
-            m = re.search(r"(synchtube\.com\/r\/|synchtu\.be\/|clickbank\.net|\/muppet\/images\/4\/48\/LookAtMeBook\.jpg|chaturbate\.com)(%s)?" % (self.room), msg, re.IGNORECASE)
+            m = re.search(r"(synchtube\.com\/r\/|synchtu\.be\/|clickbank\.net|\/muppet\/images\/4\/48\/LookAtMeBook\.jpg|chaturbate\.com|mylazysundays\.com)(%s)?" % (self.room), msg, re.IGNORECASE)
             if m and not m.groups()[1]:
                 self.logger.info("Attempted kick/ban of %s for blacklisted phrase", user.nick)
                 reason = "%s sent a blacklisted message" % (user.nick)
@@ -1870,9 +1881,6 @@ class Naoko(object):
             user = user._replace(nick=name)
             for line in f:
                 self.add("add", user, line, name!=False)
-                # Sleep between adds, otherwise the Youtube API could throttle her, resulting in unpredictable behaviour.
-                # This sleep results in the adds taking a very long time for long lists, which can be very annoying, use this function sparingly.
-                time.sleep(1)
         except Exception as e:
             print e
             return

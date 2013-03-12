@@ -28,3 +28,6 @@ HEARTBEATS = 5
 DOMAIN = "www.synchtube.com"
 # Need to hardcode Synchtube's IP
 SOCKET_IP = "173.255.204.78"
+
+# The minimum time between API requests in seconds
+API_THROTTLE = 0.5

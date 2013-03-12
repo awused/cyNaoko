@@ -3,6 +3,7 @@
 import json
 import logging
 import subprocess
+import time
 from ssl import SSLError
 from urllib import urlencode, urlopen
 from httplib import HTTPConnection, HTTPSConnection
@@ -18,8 +19,15 @@ class APIClient(object):
         self.logger.setLevel(LOG_LEVEL)
         self.logger.debug("Initializing APIClient")
         self.keys = keys
+        self.lastInfo = time.time() - API_THROTTLE
     
     def getVideoInfo(self, site, vid):
+        # Avoid spamming apis, particularly Youtube.
+        sleepTime = API_THROTTLE - time.time() + self.lastInfo
+        if sleepTime > 0:
+            time.sleep(sleepTime)
+        self.lastInfo = time.time()
+
         if site == "yt":
             return self._getYoutubeVideoInfo(vid)
         elif site == "bt":
