@@ -224,8 +224,11 @@ class Naoko(object):
             login_req.add_header('Content', 'XMLHttpRequest')
             login_res  = urlopen(login_req)
             login_res_headers = login_res.info()
+            # Reasonable guess at a required length for when both cookies are present
+            if len(login_res_headers['Set-Cookie']) < 200:
+            # Synchtube stopped sending statuses back, no idea why
             #if login_res_headers['Status'][:3] != '200':
-            #    raise Exception("Could not login")
+                raise Exception("Could not login")
 
             if login_res_headers.has_key('Set-Cookie'):
                 self._HEADERS['Cookie'] = login_res_headers['Set-Cookie']
@@ -240,8 +243,10 @@ class Naoko(object):
             room_pw_req = Request(room_url+'/password', data=room_pw_data, headers=self._HEADERS)
             room_pw_res = urlopen(room_pw_req)
             room_pw_res_headers = room_pw_res.info()
-            if room_pw_res_headers['Status'][:3] != '200': 
-                raise Exception("Could not join password protected room, check room name (case-sensitive)")
+            # I have no way of knowing if joining a password protected room failed this way until later
+            # Room name must have proper capitalization
+            #if room_pw_res_headers['Status'][:3] != '200': 
+            #    raise Exception("Could not join password protected room, check room name (case-sensitive)")
             
             if "Incorrect password!" in room_pw_res.read():
                 raise Exception("Incorrect room password supplied")
@@ -256,7 +261,10 @@ class Naoko(object):
 
         def getHiddenValue(val):
             m = re.search(r"<input.*?id=\"%s\".*?value=\"(\S+)\"" % (val), room_res_body)
-            return m.group(1)
+            try:
+                return m.group(1)
+            except AttributeError as e:
+                raise Exception("Could not join room; check room name (case-sensitive) and supply a room password if necessary.")
 
         # room_authkey is the only information needed to authenticate you, keep this
         # secret!
