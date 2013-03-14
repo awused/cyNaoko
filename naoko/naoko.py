@@ -224,8 +224,8 @@ class Naoko(object):
             login_req.add_header('Content', 'XMLHttpRequest')
             login_res  = urlopen(login_req)
             login_res_headers = login_res.info()
-            if login_res_headers['Status'][:3] != '200':
-                raise Exception("Could not login")
+            #if login_res_headers['Status'][:3] != '200':
+            #    raise Exception("Could not login")
 
             if login_res_headers.has_key('Set-Cookie'):
                 self._HEADERS['Cookie'] = login_res_headers['Set-Cookie']
