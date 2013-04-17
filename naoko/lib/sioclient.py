@@ -198,7 +198,7 @@ class SocketIOClient(object):
 
     # Socket IO Message types. There are more, but these are the bare minimum.
     HEARTBEAT = "2"
-    MESSAGE   = "3"
+    MESSAGE   = "5"
 
     def __init__(self, host, port, resource="socket.io", params={}, https=False):
         self.host = host
@@ -228,13 +228,13 @@ class SocketIOClient(object):
         self.hbthread = threading.Thread(target=SocketIOClient._heartbeat, args=[self])
         
     def _heartbeat(self):
-        self.sendHeartBeat(HEARTBEATS)
+        self.checkHeartBeat()
         self.sched.run()
 
     def __getSessionInfo(self):
         stinfo = urlopen(self.url).read()
         self.sock_info = dict(zip(['sid', 'hb', 'to', 'xports'],
-                                  urlopen(self.url).read().split(':')))
+                                  stinfo.split(':')))
         self.sid = self.sock_info['sid']
         return self.sid
 
@@ -246,25 +246,32 @@ class SocketIOClient(object):
 
     def send(self, msg_type=3, sock_id='', end_pt='', data='', log=True):
         buf = "%s:%s:%s:%s" % (msg_type, sock_id, end_pt, data)
-        #self.pkt_logger.debug("Sending %s", buf)
+        self.pkt_logger.debug("Sending %s", buf)
         self.ws.send(buf, log)
 
-    def sendHeartBeat(self, next_sec=None):
-        if next_sec:
-            self.heartBeatEvent = self.sched.enter(next_sec, 1, SocketIOClient.sendHeartBeat, [self, next_sec])
-        if not self.ws:
-            raise Exception("No WebSocket")
-        now = time.time()
-        hb_diff = now - self.last_hb
+    def sendHeartBeat(self):
+        #if next_sec:
+        #    self.heartBeatEvent = self.sched.enter(next_sec, 1, SocketIOClient.sendHeartBeat, [self, next_sec])
+        #if not self.ws:
+        #    raise Exception("No WebSocket")
+        #now = time.time()
+        #hb_diff = now - self.last_hb
         #self.pkt_logger.debug("Time since last heartbeat %.3f", hb_diff)
-        if hb_diff > TIMEOUT:
-            raise Exception("Socket.IO Timeout, %.3f since last heartbeat" % (hb_diff))
+        #if hb_diff > TIMEOUT:
+        #    raise Exception("Socket.IO Timeout, %.3f since last heartbeat" % (hb_diff))
         self.send(2, log=False)
-        self.send(3, data='{}', log=False)
+        #self.send(3, data='{}', log=False)
 
         # Logic to detect a ghost room
-        if not self.doneInit and time.time() - self.connectTime > 30:
-            raise Exception("Ghost room detected. Attempting to reconnect")
+        #if not self.doneInit and time.time() - self.connectTime > 30:
+        #    raise Exception("Ghost room detected. Attempting to reconnect")
+    def checkHeartBeat(self):
+        hb_diff = time.time() - self.last_hb
+        self.pkt_logger.debug("Time since last heartbeat %.3f", hb_diff)
+        if hb_diff > TIMEOUT:
+            raise Exception("Socket.IO Timeout, %.3f since last heartbeat" % (hb_diff))
+        self.heartBeatEvent = self.sched.enter(HEARTBEAT_CHECK, 1, SocketIOClient.checkHeartBeat, [self])
+        
 
     def connect(self):
         sid =  self.__getSessionInfo()

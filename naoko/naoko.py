@@ -213,7 +213,7 @@ class Naoko(object):
         # Tracks when she needs to update her playback status
         # This is used to interrupt her timer as she is waiting for the end of a video
         self.playerAction = threading.Event()
-
+        """
         if self.pw:
             self.logger.info("Attempting to login")
             login_url = "http://%s/user/login" % (DOMAIN)
@@ -299,10 +299,10 @@ class Naoko(object):
                 self.logger.error("Synchtube returned error: %s" %(config['error']))
             raise
         self.userlist = {}
+        """
         self.logger.info("Starting SocketIO Client")
-        self.client = SocketIOClient(SOCKET_IP, self.port, "socket.io",
-                                              self.config_params)
-
+        self.client = SocketIOClient("cytube.calzoneman.net", 8880, "socket.io", {"t": int(round(time.time() * 1000))})
+        
         # Various queues and events used to sychronize actions in separate threads
         # Some are initialized with maxlen = 0 so they will silently discard actions meant for non-existent threads
         self.st_queue = deque()
@@ -319,7 +319,15 @@ class Naoko(object):
         self.apiclient = APIClient(self.apikeys)
         self.cbclient = CleverbotClient()
         self.client.connect()
+
+
+        # Connect to the room
+        self.send("joinChannel", {"name" : self.room})
         
+        # Log In
+        self.send ("login", {"name" : self.name, "pw": self.pw})
+        
+
         # Start the threads that are required for all normal operation
         self.chatthread = threading.Thread(target=Naoko._chatloop, args=[self])
         self.chatthread.start()
@@ -330,8 +338,8 @@ class Naoko(object):
         self.stlistenthread = threading.Thread(target=Naoko._stlistenloop, args=[self])
         self.stlistenthread.start()
 
-        self.playthread = threading.Thread(target=Naoko._playloop, args=[self])
-        self.playthread.start()
+        #self.playthread = threading.Thread(target=Naoko._playloop, args=[self])
+        #self.playthread.start()
 
         self.apithread = threading.Thread(target=Naoko._apiloop, args=[self])
         self.apithread.start()
@@ -373,7 +381,7 @@ class Naoko(object):
                 status = status and (not self.client.heartBeatEvent or self.client.hbthread.isAlive())
                 status = status and (not self.dbfile or self.sqlthread.isAlive())
                 status = status and (not self.dbfile or self.webserver_mode != "embedded" or self.webthread.isAlive())
-                status = status and self.playthread.isAlive()
+                #status = status and self.playthread.isAlive()
                 status = status and self.apithread.isAlive()
             except Exception as e:
                 self.logger.error(e)
@@ -404,10 +412,10 @@ class Naoko(object):
             if not data or len(data) == 0:
                 self.sendHeartBeat()
                 continue
-            st_type = data[0]
+            st_type = data["name"]
             try:
-                if len(data) > 1:
-                    arg = data[1]
+                if "args" in data:
+                    arg = data["args"][0]
                 else:
                     arg = ''
                 fn = self.handlers[st_type]
@@ -652,7 +660,7 @@ class Naoko(object):
                 f.close()
 
     def _initHandlers(self):
-        self.handlers = {"<"                : self.chat,
+        """self.handlers = {"<"                : self.chat,
                          "leader"           : self.leader,
                          "users"            : self.users,
                          "recording?"       : self.roomSetting,
@@ -679,7 +687,9 @@ class Naoko(object):
                          "initdone"         : self.initDone,
                          "clear"            : self.clear,
                          "banlist"          : self.banlist,
-                         "kick"             : self.kicked}
+                         "kick"             : self.kicked}"""
+        self.handlers = {"chatMsg"          : self.chat,
+                        "channelOpts"       : self.channelOpts}
 
     def _initCommandHandlers(self):
         self.commandHandlers = {"restart"           : self.restart,
@@ -827,7 +837,7 @@ class Naoko(object):
             return
         self.closing.set()
         self.closeLock.release()
-        self.client.close()
+        #self.client.close()
         self.repl.close()
         self.leading.set()
         self.playerAction.set()
@@ -848,19 +858,20 @@ class Naoko(object):
     
     def sendChat(self, msg):
         self.logger.debug(repr(msg))
-        self.send("<", msg)
+        self.send("chatMsg", {"msg" : msg})
 
     def send(self, tag='', data=''):
-        buf = []
-        if not tag == '':
-            buf.append(tag)
-            if not data == '':
-                buf.append(data)
+        #return
+        buf = {"name" : tag, "args" : [data]}
+        #if not tag == '':
+        #    buf.append(tag)
+        #    if not data == '':
+        #        buf.append(data)
         try:
             buf = json.dumps(buf, encoding="utf-8")
         except UnicodeDecodeError:
             buf = json.dumps(buf, encoding="iso-8859-15")
-        self.client.send(3, data=buf)
+        self.client.send(5, data=buf)
 
     def _turnOnTV(self):
         # Short sleep to give Synchtube some time to react
@@ -1122,7 +1133,14 @@ class Naoko(object):
         self.close()
 
     def chat(self, tag, data):
-        sid = data[0]
+        username = data["username"]
+        msg = data["msg"]
+
+        self.chat_logger.info("%s: %r" , username, msg)
+        if not username == self.name and self.irc_nick and self.doneInit:
+            self.irc_queue.append("(" + username + ") " + msg)
+        
+        """sid = data[0]
         user = self.userlist[sid]
         msg = data[1]
         self.chat_logger.info("%s: %r" , user.nick, msg)
@@ -1151,7 +1169,7 @@ class Naoko(object):
             if m and not m.groups()[1]:
                 self.logger.info("Attempted kick/ban of %s for blacklisted phrase", user.nick)
                 reason = "%s sent a blacklisted message" % (user.nick)
-                self.chatKick(user, reason)
+                self.chatKick(user, reason)"""
     
     def leader(self, tag, data):
         self.logger.debug("Leader is %s", self.userlist[data])
@@ -1165,6 +1183,10 @@ class Naoko(object):
         else:
             self.leading.clear()
 
+    # Serves as a decent enough indicator of initialization being done
+    def channelOpts(self, tag, data):
+        self.doneInit = True
+    
     # Automatically set the skip mode and take leader if applicable.
     # Setskip("none") will simply fail silently, so it is safe to call.
     def initDone(self, tag, data):
