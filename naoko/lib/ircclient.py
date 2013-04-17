@@ -25,6 +25,7 @@ class IRCClient(object):
         #self.logger.debug ("%s %s %s %s", self.server, self.channel, self.nick, pw)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.connect((self.server, 6667)) # Here we connect to the server using port 6667
+        self.sock.settimeout(10*60) # Ten minute timeout to detect disconnects
         time.sleep(2)
         self.send("USER "+ self.nick +" "+ self.nick +" "+ self.nick +" :"+ self.nick +"\n") # user authentication
         self.send("NICK "+ self.nick +"\n") # here we actually assign the nick to the bot
