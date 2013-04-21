@@ -1134,7 +1134,7 @@ class Naoko(object):
 
     def chat(self, tag, data):
         username = data["username"]
-        msg = data["msg"]
+        msg = self.fixChat(data["msg"])
 
         self.chat_logger.info("%s: %r" , username, msg)
         if not username == self.name and self.irc_nick and self.doneInit:
@@ -2106,7 +2106,6 @@ class Naoko(object):
         self.tossLeader = package(self._tossLeader, sid)
         self.takeLeader()
 
-    # Checks the currently playing video against a provided API
     # Filters a string, removing invalid characters
     # Used to sanitize nicks or video titles for printing
     # Returns a boolean describing whether invalid characters were found
@@ -2137,6 +2136,31 @@ class Naoko(object):
             if replace:
                 output.append(unichr(0xfffd))
         return (valid, "".join(output))
+
+    # Undoes the changes cytube applies to chat messages
+    def fixChat(self, input):
+        if input == None: return ""
+        value = input
+        if type(value) is not str and type(value) is not unicode:
+            value = str(value)
+        if type(value) is not unicode:
+            try:
+                value = value.decode('utf-8')
+            except UnicodeDecodeError:
+                value = value.decode('iso-8859-15')
+        
+        # remove any html tags that were added
+        output = value.split("<")
+        for i, val in enumerate(output):
+            if ">" in val:
+                output[i] = val.split(">", 1)[1]
+        output = "".join(output)
+
+        # Unescape &gt; and &lt;
+        output = output.replace("&gt;", ">")
+        output = output.replace("&lt;", "<")
+
+        return output
 
     # The following private API methods are fairly low level and work with
     # synchtube sid's (session ids) or raw data arrays. They will usually
