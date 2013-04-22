@@ -69,8 +69,8 @@ eight_choices = [
     "Very doubtful"]
 
 # Simple Record Types for variable synchtube constructs
-SynchtubeUser = namedtuple('SynchtubeUser',
-                           ['sid', 'nick', 'uid', 'auth', 'ava', 'lead', 'mod', 'karma', 'msgs', 'nickChanges'])
+CytubeUser = namedtuple('CytubeUser',
+                           ["name", "rank", "leader", "meta", 'msgs'])
 
 SynchtubeVidInfo = namedtuple('SynchtubeVidInfo',
                             ['site', 'vid', 'title', 'thumb', 'dur'])
@@ -213,93 +213,8 @@ class Naoko(object):
         # Tracks when she needs to update her playback status
         # This is used to interrupt her timer as she is waiting for the end of a video
         self.playerAction = threading.Event()
-        """
-        if self.pw:
-            self.logger.info("Attempting to login")
-            login_url = "http://%s/user/login" % (DOMAIN)
-            login_body = {'email' : self.name.encode('utf-8'), 'password' : self.pw.encode('utf-8')};
-            login_data = urllib.urlencode(login_body)
-            login_req = Request(login_url, data=login_data, headers=self._HEADERS)
-            login_req.add_header('X-Requested-With', 'XMLHttpRequest')
-            login_req.add_header('Content', 'XMLHttpRequest')
-            login_res  = urlopen(login_req)
-            login_res_headers = login_res.info()
-            # Reasonable guess at a required length for when both cookies are present
-            if len(login_res_headers['Set-Cookie']) < 200:
-            # Synchtube stopped sending statuses back, no idea why
-            #if login_res_headers['Status'][:3] != '200':
-                raise Exception("Could not login")
-
-            if login_res_headers.has_key('Set-Cookie'):
-                self._HEADERS['Cookie'] = login_res_headers['Set-Cookie']
-            self.logger.info("Login successful")
         
-        room_url = "http://%s/r/%s" % (DOMAIN, self.room)
-        
-        if self.room_pw:
-            self.logger.info("Attempting to join password protected room.")
-            room_pw_body = {'password' : self.room_pw.encode('utf-8')};
-            room_pw_data = urllib.urlencode(room_pw_body)
-            room_pw_req = Request(room_url+'/password', data=room_pw_data, headers=self._HEADERS)
-            room_pw_res = urlopen(room_pw_req)
-            room_pw_res_headers = room_pw_res.info()
-            # I have no way of knowing if joining a password protected room failed this way until later
-            # Room name must have proper capitalization
-            #if room_pw_res_headers['Status'][:3] != '200': 
-            #    raise Exception("Could not join password protected room, check room name (case-sensitive)")
-            
-            if "Incorrect password!" in room_pw_res.read():
-                raise Exception("Incorrect room password supplied")
-            
-            self.logger.info("Joined password protected room")
-
-        room_req = Request(room_url, headers=self._HEADERS)
-
-        
-        room_res = urlopen(room_req)
-        room_res_body = room_res.read()
-
-        def getHiddenValue(val):
-            m = re.search(r"<input.*?id=\"%s\".*?value=\"(\S+)\"" % (val), room_res_body)
-            try:
-                return m.group(1)
-            except AttributeError as e:
-                raise Exception("Could not join room; check room name (case-sensitive) and supply a room password if necessary.")
-
-        # room_authkey is the only information needed to authenticate you, keep this
-        # secret!
-        self.authkey       = getHiddenValue("room_authkey")
-        self.port          = getHiddenValue("room_dest_port")
-        self.st_build      = getHiddenValue("st_build")
-        self.userid        = getHiddenValue("room_userid")
-
-        config_url = "http://%s/api/1/room/%s" % (DOMAIN, self.room)
-        config_info = urllib.urlopen(config_url).read()
-        config = json.loads(config_info)
-
-        try:
-            self.logger.info("Obtaining session ID")
-            if config['room'].has_key('port'):
-                self.port = config['room']['port']
-            self.port = int(self.port)
-            self.config_params = {'b' : self.st_build,
-                                  'r' : config['room']['id'],
-                                  'p' : self.port,
-                                  't' : int(round(time.time()*1000)),
-                                  'i' : socket.gethostbyname(socket.gethostname())}
-            if self.authkey and self.userid:
-                self.config_params['a'] = self.authkey
-                self.config_params['u'] = self.userid
-            if config.has_key("moderators"):
-                for m in config["moderators"]:
-                    self.modList.add(m.lower())
-        except:
-            self.logger.debug("Config is %s" % (config))
-            if config.has_key('error'):
-                self.logger.error("Synchtube returned error: %s" %(config['error']))
-            raise
         self.userlist = {}
-        """
         self.logger.info("Starting SocketIO Client")
         self.client = SocketIOClient("cytube.calzoneman.net", 8880, "socket.io", {"t": int(round(time.time() * 1000))})
         
@@ -689,7 +604,10 @@ class Naoko(object):
                          "banlist"          : self.banlist,
                          "kick"             : self.kicked}"""
         self.handlers = {"chatMsg"          : self.chat,
-                        "channelOpts"       : self.channelOpts}
+                        "channelOpts"       : self.channelOpts,
+                        "userlist"          : self.users,
+                        "addUser"           : self.addUser,
+                        "userLeave"         : self.remUser}
 
     def _initCommandHandlers(self):
         self.commandHandlers = {"restart"           : self.restart,
@@ -1022,7 +940,8 @@ class Naoko(object):
                     self.tossLeader()
         
     def ignore(self, tag, data):
-        self.logger.debug("Ignoring %s, %s", tag, data)
+        self.logger.debug("Ignoring %s", tag)
+        #self.logger.debug("Ignoring %s, %s", tag, data)
 
     def nick(self, tag, data):
         sid = data[0]
@@ -1054,24 +973,28 @@ class Naoko(object):
         else:
             self.userlist[sid] = user._replace(nickChanges=user.nickChanges+1)
 
+    def login(self, tag, data):
+        if not data["success"] or "error" in data:
+            if "error" in data:
+                raise Exception(data["error"])
+            else:
+                raise Exception("Failed to login.")
+
     def addUser(self, tag, data, isSelf=False):
-        # add_user and users data are similar aside from users having
-        # a name field at idx 1
-        userinfo = data[:]
-        userinfo.insert(1, 'unnamed')
-        self._addUser(userinfo, isSelf)
-        self.storeUserCount()
-        self.updateSkipLevel()
+        data["name"] == self.name
+        self._addUser(data, data["name"] == self.name)
+        #self.storeUserCount()
+        #self.updateSkipLevel()
 
     def remUser(self, tag, data):
         try:
-            del self.userlist[data]
-            if self.pending.has_key(data):
-                del self.pending[data]
+            del self.userlist[data["name"]]
+            if self.pending.has_key(data["name"]):
+                del self.pending[data["name"]]
         except KeyError:
-            self.logger.exception("Failure to delete user %s from %s", data, self.userlist)
-        self.storeUserCount()
-        self.updateSkipLevel()
+            self.logger.exception("Failure to delete user %s from %s", data["name"], self.userlist)
+        #self.storeUserCount()
+        #self.updateSkipLevel()
 
     def users(self, tag, data):
         for u in data:
@@ -2125,7 +2048,7 @@ class Naoko(object):
         for c in value:
             o = ord(c)
             # Locale independent ascii alphanumeric check
-            if isNick and ((o >= 48 and o <= 57) or (o >= 97 and o <= 122) or (o >= 65 and o <= 90)):
+            if isNick and ((o >= 48 and o <= 57) or (o >= 97 and o <= 122) or (o >= 65 and o <= 90) or o == 95):
                 output.append(c)
                 continue
             valid = o > 31 and o != 127 and not (o >= 0xd800 and o <= 0xdfff) and o <= 0xffff
@@ -2167,18 +2090,15 @@ class Naoko(object):
     # Fire off a synchtube message without any validation. Higher-level
     # public API methods should be built on top of them.
 
-    # Add the user described by u_arr
-    # u_arr should be in the following format:
-    # [<sid>, <nick>, <uid>, <authenticated>, <avatar-type>, <leader>, <moderator>, <karma>]
-    # This is the format used by user arrays from the synchtube "users" message
-    def _addUser(self, u_arr, isSelf=False):
-        userinfo = itertools.izip_longest(SynchtubeUser._fields, u_arr)
-        userinfo = dict(userinfo)
-        userinfo['nick'] = self.filterString(userinfo['nick'], True)[1]
+    # Add the user described by u_dict
+    def _addUser(self, u_dict, isSelf=False):
+        userinfo = u_dict.copy()
+        #userinfo['nick'] = self.filterString(userinfo['nick'], True)[1]
         userinfo['msgs'] = deque(maxlen=3)
-        userinfo['nickChanges'] = 0
-        user = SynchtubeUser(**userinfo)
-        self.userlist[user.sid] = user
+        #userinfo['nickChanges'] = 0
+        assert set(userinfo.keys()) == set(CytubeUser._fields), "User information has changed formats."
+        user = CytubeUser(**userinfo)
+        self.userlist[user.name] = user
         if isSelf:
             self.selfUser = user
 
