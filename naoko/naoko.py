@@ -72,13 +72,15 @@ eight_choices = [
 CytubeUser = namedtuple('CytubeUser',
                            ["name", "rank", "leader", "meta", 'msgs'])
 
-SynchtubeVidInfo = namedtuple('SynchtubeVidInfo',
-                            ['site', 'vid', 'title', 'thumb', 'dur'])
+CytubeVideo = namedtuple('CytubeVideo',
+                              ['id', 'title', 'seconds', 'type'])
+                              # currentTime also exists. It seems to be the duration as a float, in seconds
+                              # except for the currently playing video. Not included with 'queue' frames.
+                              # Best to ignore it for now, but this information will be needed for leading
 
-SynchtubeVideo = namedtuple('SynchtubeVideo',
-                              ['vidinfo', 'v_sid', 'uid', 'nick'])
+                              # duration also exists but seems to be for display purposes only. It is currently ignored.
 
-IRCUser = namedtuple('IRCUser', ["nick", "mod", "uid"])
+IRCUser = namedtuple('IRCUser', ["name", "rank", "leader"])
 
 # Generic object that can be assigned attributes
 class Object(object):
@@ -216,7 +218,7 @@ class Naoko(object):
         
         self.userlist = {}
         self.logger.info("Starting SocketIO Client")
-        self.client = SocketIOClient("cytube.calzoneman.net", 8880, "socket.io", {"t": int(round(time.time() * 1000))})
+        self.client = SocketIOClient(DOMAIN, 8880, "socket.io", {"t": int(round(time.time() * 1000))})
         
         # Various queues and events used to sychronize actions in separate threads
         # Some are initialized with maxlen = 0 so they will silently discard actions meant for non-existent threads
@@ -372,7 +374,7 @@ class Naoko(object):
                     msg = data[data.find("PRIVMSG " + self.channel + " :") + len("PRIVMSG " + self.channel + " :"):]
                     if not name == self.irc_nick:
                         self.st_queue.append("(" + name + ") " + msg)
-                        self.chatCommand(IRCUser(*(name, False, 1)), msg, True)
+                        self.chatCommand(IRCUser(*(name, 1, False)), msg, True)
                     self.irc_logger.info("IRC %r:%r", name, msg)
                 # Currently ignore messages sent directly to her
                 elif data.find("PRIVMSG " + self.irc_nick + " :") != -1:
@@ -607,7 +609,31 @@ class Naoko(object):
                         "channelOpts"       : self.channelOpts,
                         "userlist"          : self.users,
                         "addUser"           : self.addUser,
-                        "userLeave"         : self.remUser}
+                        "userLeave"         : self.remUser,
+                        "updatePlaylistIdx" : self.playlistIndex,
+                        "queue"             : self.addMedia,
+                        "playlist"          : self.playlist,
+                        "unqueue"           : self.removeMedia,
+                        "moveVideo"         : self.moveMedia}
+                        #leader  -- Use being leader as a signal to actively manage the playlist?
+                                # -- Requires actually implementing media switching and sending mediaUpdates every 5 seconds
+                                                    # Note: seems to be 5 seconds regardless of if a media switch has occurred
+                                # could make $lead a toggle and it'd provide good 
+                        #updateUser - worry about selfUser, maybe make selfUser a function
+                        #mediaUpdate -- the currentTime that comes with this is significant, on the other hand "paused" seems non-functional
+                        #disconnect
+                        #accouncement
+                        #kick
+                        #chatFilters
+                        #channelOpts
+                        #banlist
+                        #rank - probably ignore
+                        #userCount
+                        #drinkCount
+                        #queueLock
+                        # poll information probably doesn't need to be tracked unless I need to track whether a poll is open
+                                    # newPoll/updatePoll/closePoll
+
 
     def _initCommandHandlers(self):
         self.commandHandlers = {"restart"           : self.restart,
@@ -678,13 +704,13 @@ class Naoko(object):
     def chatCommand(self, user, msg, irc=False):
         if not msg or msg[0] != '$': return
        
-        if self.commandLock == "Mods" and not user.mod:
+        """if self.commandLock == "Mods" and not user.mod:
             return
         elif self.commandLock == "Registered" and not user.uid:
             return
-        elif self.commandLock == "Named" and user.nick == "unnamed":
+        elif self.commandLock == "Named" and user.name == "unnamed":
             return
-
+        """
         commands = self.commandHandlers
         if irc:
             commands = self.ircCommandHandlers
@@ -841,22 +867,25 @@ class Naoko(object):
     # Handlers for Synchtube message types
     # All of them receive input in the form (tag, data)
 
+    def playlistIndex(self, tag, data):
+        if "old" in data and not self.state.current == data["old"]:
+            self.logger.warn("playlistIndex out of sync, restarting. This might be serious. Tell Desuwa.")
+            self.logger.warn("Expected: %d. Actual: %d" % (self.state.current, data["old"]))
+        self.state.current = data["idx"]
+
     def addMedia(self, tag, data):
-        self._addVideo(data)
+        self._addVideo(data["media"], data["pos"])
 
     def removeMedia(self, tag, data):
-        self._removeVideo(data)
+        self._removeVideo(data["pos"])
 
     def moveMedia(self, tag, data):
-        after = None
-        if "after" in data:
-            after = data["after"]
-        self._moveVideo(data["id"], after)
+        self._moveVideo(data["src"], data["dest"])
 
     def playlist(self, tag, data):
         self.clear(tag, None)
-        for v in data:
-            self._addVideo(v, False, False)
+        for i, v in enumerate(data["pl"]):
+            self._addVideo(v, i, False, False)
 
     def clear(self, tag, data):
         self.vidLock.acquire()
@@ -2096,7 +2125,7 @@ class Naoko(object):
         #userinfo['nick'] = self.filterString(userinfo['nick'], True)[1]
         userinfo['msgs'] = deque(maxlen=3)
         #userinfo['nickChanges'] = 0
-        assert set(userinfo.keys()) == set(CytubeUser._fields), "User information has changed formats."
+        assert set(userinfo.keys()) == set(CytubeUser._fields), "User information has changed formats. Tell Desuwa."
         user = CytubeUser(**userinfo)
         self.userlist[user.name] = user
         if isSelf:
@@ -2274,59 +2303,59 @@ class Naoko(object):
         for v in vids:
             self.send("am", [v[0], v[1], self.filterString(v[2])[1],"http://i.ytimg.com/vi/%s/default.jpg" % (v[1]), v[3]/1000.0])
 
-    # Add the video described by v
-    def _addVideo(self, v, sql=True, echo=True):
+    # Add the video described by v_dict
+    def _addVideo(self, v_dict, idx, sql=True, echo=True):
         if self.stthread != threading.currentThread():
             raise Exception("_addVideo should not be called outside the Synchtube thread")
-        v[0] = v[0][:len(SynchtubeVidInfo._fields)]
-        v[0][2] = self.filterString(v[0][2])[1]
- 
-        # Synchtube will sometimes send durations as strings.
-        try:
-            v[0][4] = int(v[0][4])
-            if v[0][4] <= 0:
-                v[0][4] = 60
-        except (ValueError, TypeError) as e:
-            # Something invalid, set a default duration of one minute.
-            v[0][4] = 60
-        except IndexError as e:
-            # Malformed vidinfo, attempt to handle anyway
-            v[0].extend([60] * (len(SynchtubeVidInfo._fields) - len(v[0])))
 
-        v[0] = SynchtubeVidInfo(*v[0])
-        if len(v) < len(SynchtubeVideo._fields):
-            v.extend([None] * (len(SynchtubeVideo._fields) - len(v))) # If an unregistered adds a video there is no name included
-        v = v[:len(SynchtubeVideo._fields)]
-        v[3] = self.filterString(v[3], True)[1]
-        vid = SynchtubeVideo(*v)
+        v = v_dict.copy()
+        
+        # currentTime seems to be useless to keep around since it is not available with "queue" messages
+        if "currentTime" in v:
+            del v["currentTime"]
+        # duration is for display purposes only and can be safely ignored
+        if "duration" in v:
+            del v["duration"]
+
+        assert set(v.keys()) >= set(CytubeVideo._fields), "Video information has changed formats. Unable to continue. Tell Desuwa."
+
+        if not set(v.keys()) == set(CytubeVideo._fields):
+            self.logger.warn("Video information has changed formats. Tell Desuwa. Ignoring new fields.")
+
+            for key in set(v.keys()) - set(CytubeVideo._fields):
+                del v[key]
+        
         self.vidLock.acquire()
-        self.vidlist.append(vid)
+        self.vidlist.insert(idx, CytubeVideo(**v))
         self.vidLock.release()
-       
-        self.api_queue.append(package(self._validateAddVideo, vid, sql, echo and not v[3] == self.name))
-        self.apiAction.set()
 
-    def _removeVideo(self, v):
+        
+    def _removeVideo(self, idx):
         if self.stthread != threading.currentThread():
             raise Exception("_removeVideo should not be called outside the Synchtube thread")
-        idx = self.getVideoIndexById(v)
-        if idx >= 0:
-            self.vidLock.acquire()
-            self.vidlist.pop(idx)
-            self.vidLock.release()
+        self.vidLock.acquire()
+        self.vidlist.pop(idx)
+        self.vidLock.release()
+        if idx <= self.state.current:
+            self.state.current -= 1
 
-    def _moveVideo(self, v, after=None):
+    def _moveVideo(self, src, dest):
         if self.stthread != threading.currentThread():
             raise Exception("_moveVideo should not be called outside the Synchtube thread")
         self.vidLock.acquire()
-        idx = self.getVideoIndexById(v)
-        if idx >= 0:  
-            video = self.vidlist.pop(self.getVideoIndexById(v))
-            pos = 0
-            if after:
-                pos = self.getVideoIndexById(after) + 1
-            self.vidlist.insert(pos, video)
-            self.logger.debug("Inserted %s after %s", video, self.vidlist[pos - 1])
+        video = self.vidlist.pop(src)
+        self.vidlist.insert(dest, video)
+        
+        # Cytube doesn't send a playlistUpdateIdx message after moves
+        if src == self.state.current:
+            self.state.current = dest
+        else:
+            if src < self.state.current:
+                self.state.current -= 1
+            if dest <= self.state.current:
+                self.state.current += 1
+        
+        self.logger.debug("Inserted %s after %s", video, self.vidlist[dest - 1])
         self.vidLock.release()
 
     # Kick user using their sid(session id)

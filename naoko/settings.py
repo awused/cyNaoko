@@ -23,7 +23,7 @@ REPL_PORT = 5002
 HEARTBEAT_CHECK = 5
 
 # The domain name Naoko connects to. Right now only www.synchtube.com is going to work.
-DOMAIN = "www.synchtube.com"
+DOMAIN = "cytube.calzoneman.net"
 # Need to hardcode Synchtube's IP
 SOCKET_IP = "173.255.204.78"
 
