@@ -46,6 +46,26 @@ def package(fn, *args, **kwargs):
         fn(*args, **kwargs)
     return action
 
+# Decorator for simplicity of use
+# Prevents users without adequate permissions from using commands.
+class hasPermission(object):
+    def __init__(self, mask, required=True, leader=False):
+        self.mask = mask # Bitmask for the permission
+        self.required = required # Some commands allow users without permission to take limited action
+        self.leader = leader # Whether the command is allowed for anyone who is a mod
+    def __call__(self, fn):
+        def wrapped(naoko, command, user, *args, **kwargs):
+            # Hybrid mods can be disabled
+            name = user.name.lower()
+            # Mods implicitly have all permissions
+            if user.rank >= 2 or (self.leader and user.leader) or (naoko.hybridModStatus and name in naoko.hybridModList and (naoko.hybridModList[name] & naoko.MASKS[mask][0])):
+                return fn(naoko, command, user, *args, **kwargs)
+            elif not self.required:
+                # Some commands allow users without permissions to take limited actions
+                # Permission should default to True
+                return fn(naoko, command, user, *args, permission=False, **kwargs)
+        return wrapped
+
 eight_choices = [
     "It is certain",
     "It is decidedly so",
@@ -69,18 +89,18 @@ eight_choices = [
     "Very doubtful"]
 
 # Simple Record Types for variable synchtube constructs
-CytubeUser = namedtuple('CytubeUser',
-                           ["name", "rank", "leader", "meta", 'msgs'])
+CytubeUser = namedtuple("CytubeUser",
+                           ["name", "rank", "leader", "meta", "msgs"])
 
-CytubeVideo = namedtuple('CytubeVideo',
-                              ['id', 'title', 'seconds', 'type'])
+CytubeVideo = namedtuple("CytubeVideo",
+                              ["id", "title", "seconds", "type", "queueby"])
                               # currentTime also exists. It seems to be the duration as a float, in seconds
                               # except for the currently playing video. Not included with 'queue' frames.
                               # Best to ignore it for now, but this information will be needed for leading
 
                               # duration also exists but seems to be for display purposes only. It is currently ignored.
 
-IRCUser = namedtuple('IRCUser', ["name", "rank", "leader"])
+IRCUser = namedtuple("IRCUser", ["name", "rank", "leader"])
 
 # Generic object that can be assigned attributes
 class Object(object):
@@ -611,6 +631,7 @@ class Naoko(object):
                         "addUser"           : self.addUser,
                         "userLeave"         : self.remUser,
                         "updatePlaylistIdx" : self.playlistIndex,
+                        "updatePlaylistMeta": self.playlistMeta,
                         "queue"             : self.addMedia,
                         "playlist"          : self.playlist,
                         "unqueue"           : self.removeMedia,
@@ -624,53 +645,34 @@ class Naoko(object):
                         #disconnect
                         #accouncement
                         #kick
-                        #chatFilters
+                        #chatFilters - probably ignore
                         #channelOpts
                         #banlist
-                        #rank - probably ignore
+                        #rank - probably ignore, seems to be included in any updateUser/addUser messages
                         #userCount
-                        #drinkCount
+                        #drinkCount - probably ignore
                         #queueLock
+                        #acl - some kind of rank list for the entire channel - equivalent to the modlist?
                         # poll information probably doesn't need to be tracked unless I need to track whether a poll is open
                                     # newPoll/updatePoll/closePoll
 
 
     def _initCommandHandlers(self):
-        self.commandHandlers = {"restart"           : self.restart,
+        """
                                 "steal"             : self.steal,
                                 "lead"              : self.lead,
                                 "mod"               : self.makeLeader,
-                                "mute"              : self.mute,
-                                "unmute"            : self.unmute,
-                                "status"            : self.status,
                                 "lock"              : self.lock,
                                 "unlock"            : self.lock,
-                                "choose"            : self.choose,
-                                "permute"           : self.permute,
-                                "ask"               : self.ask,
-                                "8ball"             : self.eightBall,
                                 "kick"              : self.kick,
-                                "steak"             : self.steak,
                                 "ban"               : self.ban,
                                 "skip"              : self.skip,
-                                "d"                 : self.dice,
-                                "dice"              : self.dice,
-                                "bump"              : self.bump,
-                                "clean"             : self.cleanList,
-                                "duplicates"        : self.cleanDuplicates,
-                                "delete"            : self.delete,
                                 "lastbans"          : self.lastBans,
                                 "lastban"           : self.lastBans,
                                 "addrandom"         : self.addRandom,
-                                "purge"             : self.purge,
-                                "cleverbot"         : self.cleverbot,
-                                "translate"         : self.translate,
-                                "wolfram"           : self.wolfram,
                                 "unban"             : self.unban,
                                 "banlist"           : self.getBanlist,
-                                "eval"              : self.eval,
                                 "setskip"           : self.setSkip,
-                                "help"              : self.help,
                                 "hybridmods"        : self.hybridMods,
                                 "permissions"       : self.permissions,
                                 "autolead"          : self.autoLeader,
@@ -682,7 +684,36 @@ class Naoko(object):
                                 "commandlock"       : self.setCommandLock,
                                 "add"               : self.add,
                                 "quote"             : self.quote,
-                                "accident"          : self.accident}
+                                "accident"          : self.accident}"""
+        self.commandHandlers = {
+                                # Functions that only result in chat messages being sent
+                                # These functions do not access the database directly, change the states of any users, modify the playlist, or have any effects outside of chat
+                                "status"            : self.status,
+                                "choose"            : self.choose,
+                                "permute"           : self.permute,
+                                "d"                 : self.dice,
+                                "dice"              : self.dice,
+                                "ask"               : self.ask,
+                                "8ball"             : self.eightBall,
+                                "help"              : self.help,
+                                "eval"              : self.eval,
+                                "steak"             : self.steak,
+                                # These functions query an external API or the database
+                                "cleverbot"         : self.cleverbot,
+                                "translate"         : self.translate,
+                                "wolfram"           : self.wolfram,
+                                "quote"             : self.quote,
+                                # Functions for controlling Naoko that do not affect the room or permissions
+                                "restart"           : self.restart,
+                                "mute"              : self.mute,
+                                "unmute"            : self.unmute,
+                                # Functions that modify the playlist
+                                "clean"             : self.cleanList,
+                                "duplicates"        : self.cleanDuplicates,
+                                "delete"            : self.delete,
+                                "purge"             : self.purge,
+                                "bump"              : self.bump}
+                                
 
     def _initIRCCommandHandlers(self):
         self.ircCommandHandlers = {"status"             : self.status,
@@ -805,12 +836,7 @@ class Naoko(object):
         self.send("chatMsg", {"msg" : msg})
 
     def send(self, tag='', data=''):
-        #return
         buf = {"name" : tag, "args" : [data]}
-        #if not tag == '':
-        #    buf.append(tag)
-        #    if not data == '':
-        #        buf.append(data)
         try:
             buf = json.dumps(buf, encoding="utf-8")
         except UnicodeDecodeError:
@@ -868,10 +894,19 @@ class Naoko(object):
     # All of them receive input in the form (tag, data)
 
     def playlistIndex(self, tag, data):
-        if "old" in data and not self.state.current == data["old"]:
-            self.logger.warn("playlistIndex out of sync, restarting. This might be serious. Tell Desuwa.")
+        if "old" in data and self.state.current != data["old"]:
+            self.logger.warn("playlistIndex out of sync. This might be serious. Tell Desuwa.")
             self.logger.warn("Expected: %d. Actual: %d" % (self.state.current, data["old"]))
         self.state.current = data["idx"]
+        if self.state.current == -1:
+            pass
+            # special case handle later
+
+    def playlistMeta(self, tag, data):
+        if "count" in data and data["count"] != len(self.vidlist):
+            self.logger.warn("Video list out of sync, restarting. This is serious. Tell Desuwa.")
+            self.logger.warn("Expected: %d. Actual: %d" % (len(self.vidlist), data["count"]))
+            self.close()
 
     def addMedia(self, tag, data):
         self._addVideo(data["media"], data["pos"])
@@ -1085,26 +1120,24 @@ class Naoko(object):
         self.close()
 
     def chat(self, tag, data):
-        username = data["username"]
+        # Best to just ignore every chat message until initialization is done
+        if not self.doneInit: return
+        
+        user = self.userlist[data["username"]]
         msg = self.fixChat(data["msg"])
 
-        self.chat_logger.info("%s: %r" , username, msg)
-        if not username == self.name and self.irc_nick and self.doneInit:
-            self.irc_queue.append("(" + username + ") " + msg)
+        self.chat_logger.info("%s: %r" , user.name, msg)
+        if not user.name == self.name and self.irc_nick and self.doneInit:
+            self.irc_queue.append("(" + user.name + ") " + msg)
         
-        """sid = data[0]
-        user = self.userlist[sid]
-        msg = data[1]
-        self.chat_logger.info("%s: %r" , user.nick, msg)
+        # Only interpret regular messages as commands
+        if not data["msgclass"]:
+            self.chatCommand(user, msg)
 
+        """
         self.sql_queue.append(package(self.insertChat, msg=msg, username=user.nick, 
                     userid=user.uid, timestamp=None, protocol='ST', channel=self.room, flags=None))
         self.sqlAction.set()
-
-        if not user.sid == self.sid and self.irc_nick:
-            self.irc_queue.append("(" + user.nick + ") " + msg)
-        
-        self.chatCommand(user, msg)
 
         if user.mod or user.sid == self.sid: return
 
@@ -1232,6 +1265,8 @@ class Naoko(object):
         else: return
         self._writePersistentSettings()
 
+
+    # Note: Should use numeric ranks in addition to admin = 3+, mods = 2+, users 1+ (what exactly is 0?)
     def setCommandLock(self, command, user, data):
         if not user.mod: return
         d = data.lower()
@@ -1256,7 +1291,7 @@ class Naoko(object):
         self.asLeader(package(self.send, "shuffle"), deferred=self.DEFERRED_MASKS["SHUFFLE"]) 
 
     def help(self, command, user, data):
-        self.enqueueMsg("I only do this out of pity. https://raw.github.com/Suwako/Naoko/master/commands.txt")
+        self.enqueueMsg("I only do this out of pity. https://raw.github.com/Suwako/cyNaoko/master/commands.txt")
         #self.enqueueMsg("I refuse; you are beneath me.")
 
     # Creates a poll given an asterisk separated list of strings containing the title and at least two choices.
@@ -1281,11 +1316,11 @@ class Naoko(object):
         self.asLeader(package(self.send, "close_poll"))
 
     def mute(self, command, user, data):
-        if user.mod or self.hasPermission(user, "MUTE"):
+        if self.hasPermission(user, "MUTE"):
             self.muted = True
 
     def unmute(self, command, user, data):
-        if user.mod or self.hasPermission(user, "MUTE"):
+        if self.hasPermission(user, "MUTE"):
             self.muted = False
 
     def steal(self, command, user, data):
@@ -1331,8 +1366,8 @@ class Naoko(object):
 
     # Bumps the last video added by the specificied user
     # If no name is provided it bumps the last video by the user who sent the command
+    @hasPermission("BUMP")
     def bump(self, command, user, data):
-        if not (user.mod or self.hasPermission(user, "BUMP")): return
         
         p = self.parseParameters(data, 0b10011)
      
@@ -1348,78 +1383,70 @@ class Naoko(object):
                 if not name: return
         else:
             if not title:
-                name = user.nick.lower()
+                name = user.name.lower()
 
         if not num:
             num = 1
         else:
             if num > 10 or num < 1: return
         
-        videoIndex = self.getVideoIndexById(self.state.current)
-        
         bumpList = []
         i = len(self.vidlist)
-        while i > videoIndex + 2 and len(bumpList) < num:
+        while i > self.state.current + 1 and len(bumpList) < num:
             i -= 1
+            if self.state.current + 1 == i and len(bumpList) == 0: return
             v = self.vidlist[i]
             # Match names
-            if not (None == name or v.nick.lower() == name): continue
+            if not (None == name or v.queueby.lower() == name): continue
             # Titles 
-            if title and v.vidinfo.title.lower().find(title) == -1: continue
-            bumpList.append(v.v_sid)    
-
-        if bumpList:
-            after = None
-            if videoIndex >= 0:
-                after = self.vidlist[videoIndex].v_sid
-            self.asLeader(package(self._bump, list(bumpList), after))
+            if title and v.title.lower().find(title) == -1: continue
+            bumpList.append(i)    
+        
+        bumpList.reverse()
+       
+        self._bump(bumpList, self.state.current)
     
-    def _bump(self, targets, after=None):
-        for t in targets:
-            output = {"id" : t}
-            if after:
-                output["after"] = after
-            self.send("mm", output)
-            self.moveMedia("mm", output)
+    def _bump(self, targets, after):
+        bumpList = sorted(targets) 
+        for t in bumpList:
+            after += 1
+            self.send("moveMedia", {"src": t, "dest" : after})
 
     # Cleans all the videos above the currently playing video
+    @hasPermission("CLEAN")
     def cleanList(self, command, user, data):
-        if not (user.mod or self.hasPermission(user, "CLEAN")): return
-        videoIndex = self.getVideoIndexById(self.state.current)
-        if videoIndex > 0:
-            self.logger.debug("Cleaning %d Videos", videoIndex)
-            self.asLeader(package(self._cleanList, videoIndex))
-
-    def _cleanList(self, videoIndex):
-        i = 0
-        while i < videoIndex:
-            self.send("rm", self.vidlist[i].v_sid)
-            i+=1
-
+        if self.state.current == 0: return
+        self.logger.debug("Cleaning %d Videos", self.state.current)
+        i = self.state.current - 1
+        while i >= 0:
+            self.send("unqueue", {"pos" : i})
+            i -= 1
+            
     # Clears any duplicate videos from the list
+    @hasPermission("DUPLICATES")
     def cleanDuplicates(self, command, user, data):
-        if not (user.mod or self.hasPermission(user, "DUPLICATES")): return
         kill = []
         vids = set()
         i = 0
         while i < len(self.vidlist):
-            key = "%s:%s" % (self.vidlist[i].vidinfo.site, self.vidlist[i].vidinfo.vid)
+            key = "%s:%s" % (self.vidlist[i].id, self.vidlist[i].type)
             if key in vids:
-                if not self.vidlist[i].v_sid == self.state.current:
-                    kill.append(self.vidlist[i].v_sid)
+                if not i == self.state.current:
+                    kill.append(i)
             else:
                 vids.add(key)
             i += 1
         if kill:
-            self.asLeader(package(self._cleanPlaylist, list(kill)))
+            kill.reverse()
+            self._cleanPlaylist(kill)
     
     # Deletes all the videos posted by the specified user,
     # with a specific pattern in their title (min 4 characters), or longer than a certain duration (min 20 minutes).
     # If multiple options are provided it will only remove videos that match all of the criteria.
     # Combines the previous removelong and purge functions together, with more functionality.
     # Mods can purge themselves, and Naoko can be purged only by a mod.
+    @hasPermission("PURGE")
     def purge(self, command, user, data):
-        if not (user.mod or self.hasPermission(user, "PURGE")): return
         p = self.parseParameters(data, 0b111)
         if not p: return
         name, duration, title = p["base"], p["dur"], p["title"]
@@ -1433,30 +1460,30 @@ class Naoko(object):
         if duration and duration < 20 * 60: return
 
         # Only mods can purge themselves or Naoko.
-        if name and (name in self.modList and not (name == user.nick.lower() or (user.mod and name == self.name.lower()))):
-            return
+        # TODO -- limit purging of mods
+        #if name and (name in self.modList and not (name == user.name.lower() or (user.mod and name == self.name.lower()))):
+        #    return
 
         kill = []
-        for v in self.vidlist:
+        for i, v in enumerate(self.vidlist):
             # Only purge videos that match all criteria
-            if not v.v_sid == self.state.current and (name == None or v.nick.lower() == name) and (not duration 
-                    or v.vidinfo.dur >= duration) and (not title or v.vidinfo.title.lower().find(title) != -1):
-                
-                kill.append(v.v_sid)
+            if not i == self.state.current and (name == None or v.queueby.lower() == name) and (not duration 
+                    or v.seconds >= duration) and (not title or v.title.lower().find(title) != -1):
+                kill.append(i)
         if kill:
-            self.asLeader(package(self._cleanPlaylist, list(kill)))
+            kill.reverse()
+            self._cleanPlaylist(kill)
     
-    def _cleanPlaylist(self, kill):
+    # targets is a list of integer video indices
+    def _cleanPlaylist(self, targets):
+        kill = sorted(targets, reverse=True) 
         for x in kill:
-            self.send("rm", x)
+            self.send("unqueue", {"pos" : x})
     
     # Deletes the last video matching the given criteria. Same parameters as purge, but if nothing is given it will default to the last video
     # posted by the user who calls it.
-    def delete(self, command, user, data):
-        # Due to the way Synchtube handles videos added by unregistered users they are
-        # unable to delete their own videos. This prevents them abusing it to delete
-        # videos added by registered users.
-        if not user.uid: return 
+    @hasPermission("DELETE", False)
+    def delete(self, command, user, data, permission=True):
         p = self.parseParameters(data, 0b10111)
         if not p: return
         name, duration, title, num = p["base"], p["dur"], p["title"], p["num"]
@@ -1470,7 +1497,7 @@ class Naoko(object):
                 if not name: return
         else:
             if not duration and not title:
-                name = user.nick.lower()
+                name = user.name.lower()
 
         if not num:
             num = 1
@@ -1478,26 +1505,23 @@ class Naoko(object):
             if num > 10 or num < 1: return
         
         # Non-mods and non-hybrid mods can only delete their own videos
-        # This does prevent unregistered users from deleting their own videos
-        if (not user.nick.lower() == name or title or duration) and not (user.mod or self.hasPermission(user, "DELETE")): return
-        
-        videoIndex = self.getVideoIndexById(self.state.current)
+        if (not user.name.lower() == name or title or duration) and not (permission): return
         
         kill = []
         i = len(self.vidlist)
-        while i > videoIndex + 1 and len(kill) < num:
+        while i > self.state.current + 1 and len(kill) < num:
             i -= 1
             v = self.vidlist[i]
             # Match names
-            if None != name and v.nick.lower() != name: continue
+            if None != name and v.queueby.lower() != name: continue
             # Titles 
-            if title and v.vidinfo.title.lower().find(title) == -1: continue
+            if title and v.title.lower().find(title) == -1: continue
             # Durations
-            if duration and v.vidinfo.dur < duration: continue
-            kill.append(v.v_sid)    
+            if duration and v.seconds < duration: continue
+            kill.append(i)    
 
         if kill:
-            self.asLeader(package(self._cleanPlaylist, list(kill)))
+            self._cleanPlaylist(kill)
 
     # Adds random videos from the database
     def addRandom(self, command, user, data):
@@ -1688,9 +1712,9 @@ class Naoko(object):
                 output.append(k)
         self.enqueueMsg("Permissions for %s: %s" % (name, "".join(output)))
 
+    @hasPermission("RESTART")
     def restart(self, command, user, data):
-        if user.mod or self.hasPermission(user, "RESTART"):
-            self.close()
+        self.close()
 
     def choose(self, command, user, data):
         if not data: return
@@ -1971,15 +1995,6 @@ class Naoko(object):
             self.userCountTime = storeTime
             self.sql_queue.append(package(self.insertUserCount, count, storeTime))
             self.sqlAction.set()
-    
-    # Returns whether a specified user has the permission specified by the mask.
-    def hasPermission(self, user, mask):
-        # If hybrid mods are disabled or the user isn't logged in return False.
-        if not self.hybridModStatus or not user.uid: return False
-        n = user.nick.lower()
-        if n in self.hybridModList and (self.hybridModList[n] & self.MASKS[mask][0]):
-            return True
-        return False
    
     def checkSkip(self):
         if "num_votes" in self.room_info and self.room_info["num_votes"]["votes"] >= self.skipLevel:
@@ -2101,8 +2116,15 @@ class Naoko(object):
             except UnicodeDecodeError:
                 value = value.decode('iso-8859-15')
         
-        # remove any html tags that were added
-        output = value.split("<")
+        output = value
+
+        # Replace html tags with whatever they replaced
+        output = re.sub(r"</?strong>", "*", output)
+        output = re.sub(r"</?em>", "_", output)
+
+
+        # Remove any other html tags that were added
+        output = output.split("<")
         for i, val in enumerate(output):
             if ">" in val:
                 output[i] = val.split(">", 1)[1]
