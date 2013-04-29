@@ -635,7 +635,8 @@ class Naoko(object):
                         "queue"             : self.addMedia,
                         "playlist"          : self.playlist,
                         "unqueue"           : self.removeMedia,
-                        "moveVideo"         : self.moveMedia}
+                        "moveVideo"         : self.moveMedia,
+                        "chatFilters"       : self.ignore}
                         #leader  -- Use being leader as a signal to actively manage the playlist?
                                 # -- Requires actually implementing media switching and sending mediaUpdates every 5 seconds
                                                     # Note: seems to be 5 seconds regardless of if a media switch has occurred
@@ -645,7 +646,6 @@ class Naoko(object):
                         #disconnect
                         #accouncement
                         #kick
-                        #chatFilters - probably ignore
                         #channelOpts
                         #banlist
                         #rank - probably ignore, seems to be included in any updateUser/addUser messages
@@ -920,6 +920,8 @@ class Naoko(object):
     def playlist(self, tag, data):
         self.clear(tag, None)
         for i, v in enumerate(data["pl"]):
+            # Don't add the entire playlist to the database
+            # It's also unsafe to delete any videos detected as invalid
             self._addVideo(v, i, False, False)
 
     def clear(self, tag, data):
@@ -1598,6 +1600,7 @@ class Naoko(object):
         elif data.find("blip.tv") != -1:
             site = "bt"
             vid = data[-7:]
+            return # Cytube doesn't support blip.tv
         elif data.find("soundcloud") != -1:
             # Soundcloud URLs do not contain ids so additional steps are required.
             site = "sc"
@@ -2247,16 +2250,25 @@ class Naoko(object):
         self.invalidVideo("Invalid video.")
 
     # Validates a video before inserting it into the database.
-    # Will correct invalid durations and titles for Youtube videos.
+    # Will correct invalid durations and titles for videos.
     # This makes SQL inserts dependent on the external API.
-    def _validateAddVideo(self, v, sql=True, echo=True):
-        vi = v.vidinfo
-        dur = vi.dur
-        title = vi.title
-        valid = self.checkVideoId(vi)
+    def _validateAddVideo(self, v, sql, idx, safe):
+        v_id = v.id
+        valid = True
+        data = None
+        if v.type == "sc":
+            # Soundcloud is special
+            v_id = self.apiclient.resolveSoundcloud(v_id)
+            if v_id == None:
+                valid = False
+            if v_id == False:
+                valid = "Unknown"
+        if v.type == "dm":
+            v_id = v_id[:6] 
+            
 
-        if valid:
-            data = self.apiclient.getVideoInfo(vi.site, vi.vid)
+        if valid and not valid == "Unknown":
+            data = self.apiclient.getVideoInfo(v.type, v_id)
             if data == "Unknown":
                 # Do not store the video if it is invalid or from an unknown website.
                 # Trust that it is a video that will play.
@@ -2264,30 +2276,31 @@ class Naoko(object):
             elif data:
                 title, dur, valid = data
             else:
+                # Shouldn't be possible with Cytube but better to be safe
                 valid = False
         
-        # -- TODO -- See if people care about videos with incorrect titles.
+        # This shouldn't ever happen
         if not valid:
             # The video is invalid don't insert it.
             self.logger.debug("Invalid video, skipping SQL insert.")
             self.logger.debug(data)
             # Flag the video as invalid.
-            self.flagVideo(vi.site, vi.vid, 1)
-            # Go even further and remove it from the playlist completely
-            if echo:
+            self.flagVideo(v.type, v_id, 1)
+            # Go even further and remove it from the playlist completely, if safe
+            if safe:
                 self.enqueueMsg("Invalid video removed.")
-            self.stExecute(package(self.asLeader, package(self.send, "rm", v.v_sid)))
+                self.stExecuite(package(self.asLeader, package(self.send, "unqueue", {"pos": idx})))
             return
         # Curl is missing or the duration is 0, don't insert it but leave it on the playlist
         if valid == "Unknown" or dur == 0: return
 
         # Don't insert videos added by Naoko.
-        if str(v.uid) == self.userid: return
+        if v.queueby == self.name: return
 
         if sql:
-            # The insert the video using the retrieved title and duration.
+            # Insert the video using the retrieved title and duration.
             # Trust the external APIs over the Synchtube playlist.
-            self.sql_queue.append(package(self.insertVideo, vi.site, vi.vid, title, dur, v.nick))
+            self.sql_queue.append(package(self.insertVideo, v.type, v_id, title, dur, v.queueby))
             self.sqlAction.set()
 
     def _lastBans(self, nick, num):
@@ -2326,7 +2339,7 @@ class Naoko(object):
             self.send("am", [v[0], v[1], self.filterString(v[2])[1],"http://i.ytimg.com/vi/%s/default.jpg" % (v[1]), v[3]/1000.0])
 
     # Add the video described by v_dict
-    def _addVideo(self, v_dict, idx, sql=True, echo=True):
+    def _addVideo(self, v_dict, idx, sql=True, safe=True):
         if self.stthread != threading.currentThread():
             raise Exception("_addVideo should not be called outside the Synchtube thread")
 
@@ -2338,6 +2351,10 @@ class Naoko(object):
         # duration is for display purposes only and can be safely ignored
         if "duration" in v:
             del v["duration"]
+        # More effort to switch to "vi" than it is to just ignore it
+        # Will make maitaining two versions or porting changes back to Naoko normal
+        if v["type"] == "vi":
+            v["type"] = "vm"
 
         assert set(v.keys()) >= set(CytubeVideo._fields), "Video information has changed formats. Unable to continue. Tell Desuwa."
 
@@ -2346,10 +2363,14 @@ class Naoko(object):
 
             for key in set(v.keys()) - set(CytubeVideo._fields):
                 del v[key]
-        
+       
+        vid = CytubeVideo(**v)
         self.vidLock.acquire()
-        self.vidlist.insert(idx, CytubeVideo(**v))
+        self.vidlist.insert(idx, vid)
         self.vidLock.release()
+
+        self.api_queue.append(package(self._validateAddVideo, vid, sql, idx, safe))
+        self.apiAction.set()
 
         
     def _removeVideo(self, idx):

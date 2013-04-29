@@ -10,7 +10,22 @@ from httplib import HTTPConnection, HTTPSConnection
 
 from settings import *
 
+# Throttle all the public methods
+# Since there is only one thread which calls API methods this won't be circumvented
+# This throttles functions independently, which should be fine
+class throttle(object):
+    def __init__ (self):
+        self.last_call = 0
 
+    def __call__ (self, fn):
+        def wrapped(apiclient, *args, **kwargs):
+            remaining = API_THROTTLE - time.time() + self.last_call
+            if remaining > 0:
+                time.sleep(remaining)
+            self.last_call = time.time()
+            return fn(apiclient, *args, **kwargs)
+        return wrapped
+    
 # A client for all the various APIs used by Naoko
 # Responsible for making requests and returning responses
 class APIClient(object):
@@ -20,14 +35,9 @@ class APIClient(object):
         self.logger.debug("Initializing APIClient")
         self.keys = keys
         self.lastInfo = time.time() - API_THROTTLE
-    
+   
+    @throttle()
     def getVideoInfo(self, site, vid):
-        # Avoid spamming apis, particularly Youtube.
-        sleepTime = API_THROTTLE - time.time() + self.lastInfo
-        if sleepTime > 0:
-            time.sleep(sleepTime)
-        self.lastInfo = time.time()
-
         if site == "yt":
             return self._getYoutubeVideoInfo(vid)
         elif site == "bt":
@@ -44,6 +54,7 @@ class APIClient(object):
     # Translates text from src to dst.
     # If src is None the Microsoft Translator will attempt to guess the language.
     # Returns -1 if there's no id or secret to use to get an access token.
+    @throttle()
     def translate(self, text, src, dst):
         if not self.keys.mst_id or not self.keys.mst_secret: return -1
         token = self._getMSTAccessToken()
@@ -93,6 +104,7 @@ class APIClient(object):
             return accessToken
 
     # Query the Wolfram Alpha API.
+    @throttle()
     def wolfram(self, text):
         if not self.keys.wf_id: return -1
         data = self._getWolframAPI(text)
@@ -134,6 +146,7 @@ class APIClient(object):
 
     # Resolve a Soundcloud URL into usable track information.
     # Soundcloud is the only site that does not include the ids in their URLs.
+    @throttle()
     def resolveSoundcloud(self, url):
         if not self.keys.sc_id: return False
         self.logger.debug("Resolving URL using the Soundcloud API.")
@@ -143,6 +156,7 @@ class APIClient(object):
                 return self._getSoundcloudID(data["location"])
         return False
 
+    # The call to the API is necessary to make sure it's a track and not a stream
     def _getSoundcloudID(self, url):
         data = None
         try:
@@ -170,6 +184,24 @@ class APIClient(object):
             self.logger.debug(e)
         finally:
             con.close()
+            return data
+
+    @throttle()
+    def getSoundcloudURL(self, id):
+        if not self.keys.sc_id: return False
+        con = HTTPSConnection("api.soundcloud.com", timeout=10)
+        params = {"client_id" : self.keys.sc_id}
+        data = None
+        try:
+            con.request("GET", "/tracks/%s.json?%s" % (id, urlencode(params)))
+            resp = json.loads(con.getresponse().read())
+            if resp["kind"] == "track":
+                data = resp["permalink_url"]
+        except Exception as e:
+            # Many things can go wrong with an HTTP request or during JSON parsing
+            self.logger.warning("Error retrieving Soundcloud API information.")
+            self.logger.debug(e)
+        finally:
             return data
 
     # Get information on videos from various video APIs.

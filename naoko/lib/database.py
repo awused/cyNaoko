@@ -84,8 +84,6 @@ class NaokoDB(object):
         self.con = sqlite3.connect(database, timeout=60)
         self._state = "open"
 
-
-
         # run self.initscript if we have an empty db (one with no tables)
         self.initdb()
         tables = self._getTables()
@@ -94,7 +92,6 @@ class NaokoDB(object):
             raise ValueError("Database '%s' is non-empty but "
                             "does not provide required tables %s" %
                             (database, self._required_tables - tables))
-
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self._state = "closed"
@@ -237,7 +234,7 @@ class NaokoDB(object):
 
 
     # Higher level video/poll/chat-related APIs
-    def getVideos(self, num=None, columns=None, orderby=None, duration_s=None, title=None, user=None, blockedFlags=0b11):
+    def getVideos(self, num=None, columns=None, orderby=None, duration_s=None, title=None, user=None, blockedFlags=0b11, blockedSites = []):
         """
         Retrieves videos from the video_stats table of Naoko's database.
 
