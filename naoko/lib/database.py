@@ -234,6 +234,7 @@ class NaokoDB(object):
 
 
     # Higher level video/poll/chat-related APIs
+    # TODO -- Implement blockedSites
     def getVideos(self, num=None, columns=None, orderby=None, duration_s=None, title=None, user=None, blockedFlags=0b11, blockedSites = []):
         """
         Retrieves videos from the video_stats table of Naoko's database.
@@ -296,6 +297,19 @@ class NaokoDB(object):
         if isinstance(blockedFlags, (int, long)):
             where_cls += " AND v.flags & ? = 0 "
             binds += (blockedFlags,)
+
+        if isinstance(blockedSites, (list, tuple)):
+            sites_cls = " AND v.type NOT IN ("
+            flg = False
+            for b in blockedSites:
+                if isinstance(b, (str, unicode)) and len(b) == 2:
+                    if flg:
+                        sites_cls += ","
+                    sites_cls += "?"
+                    binds += (b,)
+                    flg = True
+            if flg:
+                where_cls += sites_cls + ") "
 
         sql = sel_cls + from_cls + where_cls
 

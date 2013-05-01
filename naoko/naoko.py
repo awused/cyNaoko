@@ -259,10 +259,10 @@ class Naoko(object):
 
 
         # Connect to the room
-        self.send("joinChannel", {"name" : self.room})
+        self.send("joinChannel", {"name": self.room})
         
         # Log In
-        self.send ("login", {"name" : self.name, "pw": self.pw})
+        self.send ("login", {"name": self.name, "pw": self.pw})
         
 
         # Start the threads that are required for all normal operation
@@ -347,7 +347,6 @@ class Naoko(object):
                 self.logger.warn("Failed to parse"  + data)
                 raise e;
             if not data or len(data) == 0:
-                self.sendHeartBeat()
                 continue
             st_type = data["name"]
             try:
@@ -669,7 +668,6 @@ class Naoko(object):
                                 "skip"              : self.skip,
                                 "lastbans"          : self.lastBans,
                                 "lastban"           : self.lastBans,
-                                "addrandom"         : self.addRandom,
                                 "unban"             : self.unban,
                                 "banlist"           : self.getBanlist,
                                 "setskip"           : self.setSkip,
@@ -712,7 +710,10 @@ class Naoko(object):
                                 "duplicates"        : self.cleanDuplicates,
                                 "delete"            : self.delete,
                                 "purge"             : self.purge,
-                                "bump"              : self.bump}
+                                "bump"              : self.bump,
+                                # Functions that require a database
+                                "addrandom"         : self.addRandom,
+                                "blacklist"         : self.blacklist}
                                 
 
     def _initIRCCommandHandlers(self):
@@ -833,10 +834,10 @@ class Naoko(object):
     
     def sendChat(self, msg):
         self.logger.debug(repr(msg))
-        self.send("chatMsg", {"msg" : msg})
+        self.send("chatMsg", {"msg": msg})
 
     def send(self, tag='', data=''):
-        buf = {"name" : tag, "args" : [data]}
+        buf = {"name": tag, "args": [data]}
         try:
             buf = json.dumps(buf, encoding="utf-8")
         except UnicodeDecodeError:
@@ -959,6 +960,7 @@ class Naoko(object):
                 self.state.time = int(round(time.time() * 1000))
         self.playerAction.set()
 
+    # TODO -- maintain checking videos on playback, even ones added by Naoko
     def play(self, tag, data):
         self._play()    
     
@@ -1126,7 +1128,7 @@ class Naoko(object):
         if not self.doneInit: return
         
         user = self.userlist[data["username"]]
-        msg = self.fixChat(data["msg"])
+        msg = self._fixChat(data["msg"])
 
         self.chat_logger.info("%s: %r" , user.name, msg)
         if not user.name == self.name and self.irc_nick and self.doneInit:
@@ -1222,9 +1224,9 @@ class Naoko(object):
                         settings = self.room_info["vote_settings"]
                     else:
                         # If there is no known previous setting, default to 33%.
-                        settings = {"settings" : "percent", "num" : 33}
+                        settings = {"settings": "percent", "num": 33}
             if g[3]:
-                settings = {"num" : int(g[3]), "settings" : ("percent" if g[4] else "thres")}
+                settings = {"num": int(g[3]), "settings": ("percent" if g[4] else "thres")}
             
             if settings:
                 self.asLeader(package(self._setSkip, settings.copy()))
@@ -1317,13 +1319,13 @@ class Naoko(object):
         if not (user.mod or self.hasPermission(user, "POLL")): return
         self.asLeader(package(self.send, "close_poll"))
 
+    @hasPermission("MUTE")
     def mute(self, command, user, data):
-        if self.hasPermission(user, "MUTE"):
-            self.muted = True
+        self.muted = True
 
+    @hasPermission("MUTE")
     def unmute(self, command, user, data):
-        if self.hasPermission(user, "MUTE"):
-            self.muted = False
+        self.muted = False
 
     def steal(self, command, user, data):
         if not (user.mod or self.hasPermission(user, "LEAD")): return
@@ -1412,7 +1414,7 @@ class Naoko(object):
         bumpList = sorted(targets) 
         for t in bumpList:
             after += 1
-            self.send("moveMedia", {"src": t, "dest" : after})
+            self.send("moveMedia", {"src": t, "dest": after})
 
     # Cleans all the videos above the currently playing video
     @hasPermission("CLEAN")
@@ -1421,7 +1423,7 @@ class Naoko(object):
         self.logger.debug("Cleaning %d Videos", self.state.current)
         i = self.state.current - 1
         while i >= 0:
-            self.send("unqueue", {"pos" : i})
+            self.send("unqueue", {"pos": i})
             i -= 1
             
     # Clears any duplicate videos from the list
@@ -1480,7 +1482,7 @@ class Naoko(object):
     def _cleanPlaylist(self, targets):
         kill = sorted(targets, reverse=True) 
         for x in kill:
-            self.send("unqueue", {"pos" : x})
+            self.send("unqueue", {"pos": x})
     
     # Deletes the last video matching the given criteria. Same parameters as purge, but if nothing is given it will default to the last video
     # posted by the user who calls it.
@@ -1526,32 +1528,41 @@ class Naoko(object):
             self._cleanPlaylist(kill)
 
     # Adds random videos from the database
-    def addRandom(self, command, user, data):
+    @hasPermission("RANDOM", False)
+    def addRandom(self, command, user, data, permission=True):
         # Limit to once every 5 seconds
         if time.time() - self.last_random < 5: return
         self.last_random = time.time()
         
-        if not (user.mod or len(self.vidlist) <= 10 or self.hasPermission(user, "RANDOM")): return
+        if not (permission or len(self.vidlist) <= 10): return
         
         p = self.parseParameters(data, 0b1111)
         if not p: return
         num, duration, title, username = p["base"], p["dur"], p["title"], p["user"]
        
         if duration or title or username:
-            if not (user.mod or self.hasPermission(user, "RANDOM")): return
+            if not permission: return
 
         if not duration:
             duration = 600
 
         try:
             num = int(num)
-            if num > 20 or (not user.mod and not self.hasPermission(user, "RANDOM") and num > 5) or num < 1: return
+            if num > 20 or (not permission and num > 5) or num < 1: return
         except (TypeError, ValueError) as e:
             if num: return
             num = 5
         self.sql_queue.append(package(self._addRandom, num, duration, title, username))
         self.sqlAction.set()
-    
+
+    # Blacklists the currently playing video so Naoko will ignore it
+    def blacklist(self, command, user, data):
+        # Rather arbitrary requirement of rank 5
+        if user.rank < 5: return
+        
+        target = self.vidlist[self.state.current]
+        self.flagVideo(target.type, target.id, 0b10)
+
     # Retrieve the latest bans for the specified user
     def lastBans(self, command, user, data):
         params = data.split()
@@ -1965,7 +1976,7 @@ class Naoko(object):
                 "dur"   : duration,
                 "title" : title,
                 "user"  : user,
-                "num": num}
+                "num"   : num}
 
     # Two functions that search the lists in an efficient manner
 
@@ -2108,7 +2119,7 @@ class Naoko(object):
         return (valid, "".join(output))
 
     # Undoes the changes cytube applies to chat messages
-    def fixChat(self, input):
+    def _fixChat(self, input):
         if input == None: return ""
         value = input
         if type(value) is not str and type(value) is not unicode:
@@ -2253,19 +2264,17 @@ class Naoko(object):
     # Will correct invalid durations and titles for videos.
     # This makes SQL inserts dependent on the external API.
     def _validateAddVideo(self, v, sql, idx, safe):
-        v_id = v.id
+        # Don't insert videos added by Naoko.
+        # We can also assume any video added by Naoko has passed her own checks
+        if v.queueby == self.name: return
+        
         valid = True
         data = None
-        if v.type == "sc":
-            # Soundcloud is special
-            v_id = self.apiclient.resolveSoundcloud(v_id)
-            if v_id == None:
-                valid = False
-            if v_id == False:
-                valid = "Unknown"
-        if v.type == "dm":
-            v_id = v_id[:6] 
-            
+        v_id = self._fixVideoID(v)
+        if v_id == None:
+            valid = False
+        if v_id == False:
+            valid = "Unknown"
 
         if valid and not valid == "Unknown":
             data = self.apiclient.getVideoInfo(v.type, v_id)
@@ -2286,7 +2295,8 @@ class Naoko(object):
             self.logger.debug(data)
             # Flag the video as invalid.
             self.flagVideo(v.type, v_id, 1)
-            # Go even further and remove it from the playlist completely, if safe
+            # Go even further and remove it from the playlist completely, if it's safe
+            # TODO - implement a stack of videos for removal later
             if safe:
                 self.enqueueMsg("Invalid video removed.")
                 self.stExecuite(package(self.asLeader, package(self.send, "unqueue", {"pos": idx})))
@@ -2294,14 +2304,20 @@ class Naoko(object):
         # Curl is missing or the duration is 0, don't insert it but leave it on the playlist
         if valid == "Unknown" or dur == 0: return
 
-        # Don't insert videos added by Naoko.
-        if v.queueby == self.name: return
-
         if sql:
             # Insert the video using the retrieved title and duration.
             # Trust the external APIs over the Synchtube playlist.
             self.sql_queue.append(package(self.insertVideo, v.type, v_id, title, dur, v.queueby))
             self.sqlAction.set()
+
+    def _fixVideoID(self, v):
+        v_id = v.id
+        if v.type == "sc":
+            # Soundcloud is special
+            v_id = self.apiclient.resolveSoundcloud(v_id)
+        if v.type == "dm":
+            v_id = v_id[:6]
+        return v_id   
 
     def _lastBans(self, nick, num):
         rows = self.dbclient.getLastBans(nick, num)
@@ -2329,15 +2345,44 @@ class Naoko(object):
     def _addRandom(self, num, duration, title, user):
         self.logger.debug("Adding %d randomly selected videos, with title like %s, and duration no more than %s seconds, posted by user %s", num, title, duration, user)
         startTime = time.time()
-        vids = self.dbclient.getVideos(num, ['type', 'id', 'title', 'duration_ms'], ('RANDOM()',), duration, title, user)
+        vids = self.dbclient.getVideos(num, ['type', 'id'], ('RANDOM()',), duration, title, user, blockedSites=["bt", "sc"]) # Cytube doesn't support Blip.tv, and no one likes Soundcloud anyway
+        # TODO -- Make blockedSites something the user can specify
         self.logger.debug("Took %f seconds", time.time() - startTime)
         self.logger.debug("Retrieved %s", vids)
-        self.stExecute(package(self.asLeader, package(self._addVideosToList, list(vids))))
+        self._addVideosToList(vids)
+        #self.stExecute(package(self.asLeader, package(self._addVideosToList, list(vids))))
 
     def _addVideosToList(self, vids):
         for v in vids:
-            self.send("am", [v[0], v[1], self.filterString(v[2])[1],"http://i.ytimg.com/vi/%s/default.jpg" % (v[1]), v[3]/1000.0])
+            self.api_queue.append(package(self._addVideoToList, *v))
+            #self.send("am", [v[0], v[1], self.filterString(v[2])[1],"http://i.ytimg.com/vi/%s/default.jpg" % (v[1]), v[3]/1000.0])
+        self.apiAction.set()
 
+    def _addVideoToList(self, site, vid, url=None):
+        packet = {"id"  : vid,
+                "type"  : site,
+                "pos"   : "end"}
+        
+        if site == "sc":
+            if url:
+                packet["id"] = url
+            else:
+                packet["id"] = self.apiclient.getSoundcloudURL(vid)
+        if site == "vm":
+            packet["type"] = "vi"
+
+        # Soundcloud videos will tend towards the bottom of the list
+        self.send("queue", packet)
+
+        self.api_queue.append(package(self._checkAddedVideo, site, vid))
+        self.apiAction.set()
+        
+    def _checkAddedVideo(self, site, vid):
+        data = self.apiclient.getVideoInfo(site, vid)
+        if not data or data == "Unknown": return
+        if not data[2]:
+           self.flagVideo(site, vid, 1)
+        
     # Add the video described by v_dict
     def _addVideo(self, v_dict, idx, sql=True, safe=True):
         if self.stthread != threading.currentThread():
@@ -2440,9 +2485,6 @@ class Naoko(object):
         self.tossing = True
         self.unToss = package(self.send, "takeleader", self.sid)
         self.send("toss", sid)
-
-    def sendHeartBeat(self):
-        self.send()
 
     def _getConfig(self):
         config = ConfigParser.RawConfigParser()
