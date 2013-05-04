@@ -2460,6 +2460,7 @@ class Naoko(object):
 
         v = v_dict.copy()
         
+
         # currentTime seems to be useless to keep around since it is not available with "queue" messages
         if "currentTime" in v:
             del v["currentTime"]
@@ -2495,6 +2496,8 @@ class Naoko(object):
         self.vidlist.pop(idx)
         self.vidLock.release()
         if idx <= self.state.current:
+            if idx == self.state.current:
+                self.state.time = -11 # Set the time to negative so it doesn't delete another video when the current video is deleted
             self.state.current -= 1
 
     def _moveVideo(self, src, dest):
