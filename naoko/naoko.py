@@ -58,7 +58,7 @@ class hasPermission(object):
             # Hybrid mods can be disabled
             name = user.name.lower()
             # Mods implicitly have all permissions
-            if user.rank >= 2 or (self.leader and user.leader) or (naoko.hybridModStatus and name in naoko.hybridModList and (naoko.hybridModList[name] & naoko.MASKS[mask][0])):
+            if user.rank >= 2 or (self.leader and user.leader) or (user.rank >= 1 and naoko.hybridModStatus and name in naoko.hybridModList and (naoko.hybridModList[name] & naoko.MASKS[mask][0])):
                 return fn(naoko, command, user, *args, **kwargs)
             elif not self.required:
                 # Some commands allow users without permissions to take limited actions
@@ -144,13 +144,21 @@ class Naoko(object):
         "POLL"          : ((1 << 17), 'P'), # P - Start and end polls.
         "SHUFFLE"       : ((1 << 18), 'F'), # F - Shuffle.
         "UNREGSPAMBAN"  : ((1 << 19), 'I'), # I - Change whether unregistered users are banned for spamming or have multiple chances.
-        "ADD"           : ((1 << 20), 'H')} # H - Add when the list is locked.
+        "ADD"           : ((1 << 20), 'H'), # H - Add when the list is locked.
+        "MANAGE"        : ((1 << 21), 'N')} # N - Enable or disable playlist management
 
     # Bitmasks for deferred tosses
     DEFERRED_MASKS = {
         "SKIP"          : 1,
         "UNBAN"         : 1 << 1,
         "SHUFFLE"       : 1 << 2}
+
+    # Playback states
+    _STATE_FORCED_SWITCH    = -2 # A switch initiated by a user before a video has finished
+    _STATE_NORMAL_SWITCH    = -1 # A switch initiated normally at the end of a video
+    _STATE_UNKNOWN          = 0
+    _STATE_PLAYING          = 1
+    _STATE_PAUSED           = 2
 
     def __init__(self, wasKicked, pipe=None):
         # Initialize all loggers
@@ -226,7 +234,7 @@ class Naoko(object):
        
         # All the information related to playback state
         self.state = Object()
-        self.state.state = 0
+        self.state.state = self._STATE_UNKNOWN
         self.state.current = None
         self.state.time = 0
         self.state.pauseTime = -1.0
@@ -257,6 +265,8 @@ class Naoko(object):
         self.cbclient = CleverbotClient()
         self.client.connect()
 
+        # Set a default selfUser with admin permissions, it will be updated later
+        self.selfUser = CytubeUser(self.name, 3, False, {"afk", False}, deque(maxlen=3))
 
         # Connect to the room
         self.send("joinChannel", {"name": self.room})
@@ -570,9 +580,16 @@ class Naoko(object):
             self.unregSpamBan = (line == "ON\n")
             line = f.readline()
             
+            # Determines which classes of users can use commands, takes priority over hybrid mods
             self.commandLock = ""
             if (version >= 1):
                 self.commandLock = line[:-1]
+                line = f.readline()
+
+            # Whether Naoko is actively managing the playlist and adding videos to extend it
+            self.managing = False
+            if (version >= 2):
+                self.managing = (line == "ON\n")
                 line = f.readline()
 
             self.hybridModStatus = (line == "ON\n")
@@ -587,6 +604,7 @@ class Naoko(object):
             self.logger.debug(e)
             self.autoLead = False
             self.autoSkip = "none"
+            self.managing = False
             self.hybridModStatus = False
             self.hybridModList = {}
             self.unregSpamBan = False
@@ -635,13 +653,13 @@ class Naoko(object):
                         "playlist"          : self.playlist,
                         "unqueue"           : self.removeMedia,
                         "moveVideo"         : self.moveMedia,
-                        "chatFilters"       : self.ignore}
+                        "chatFilters"       : self.ignore,
+                        "mediaUpdate"       : self.mediaUpdate}
                         #leader  -- Use being leader as a signal to actively manage the playlist?
                                 # -- Requires actually implementing media switching and sending mediaUpdates every 5 seconds
                                                     # Note: seems to be 5 seconds regardless of if a media switch has occurred
                                 # could make $lead a toggle and it'd provide good 
                         #updateUser - worry about selfUser, maybe make selfUser a function
-                        #mediaUpdate -- the currentTime that comes with this is significant, on the other hand "paused" seems non-functional
                         #disconnect
                         #accouncement
                         #kick
@@ -654,6 +672,7 @@ class Naoko(object):
                         #acl - some kind of rank list for the entire channel - equivalent to the modlist?
                         # poll information probably doesn't need to be tracked unless I need to track whether a poll is open
                                     # newPoll/updatePoll/closePoll
+                        # seenlogins - used to determine valid targets for bans
 
 
     def _initCommandHandlers(self):
@@ -711,6 +730,7 @@ class Naoko(object):
                                 "delete"            : self.delete,
                                 "purge"             : self.purge,
                                 "bump"              : self.bump,
+                                "management"        : self.setPlaylistManagement,
                                 # Functions that require a database
                                 "addrandom"         : self.addRandom,
                                 "blacklist"         : self.blacklist}
@@ -899,16 +919,46 @@ class Naoko(object):
             self.logger.warn("playlistIndex out of sync. This might be serious. Tell Desuwa.")
             self.logger.warn("Expected: %d. Actual: %d" % (self.state.current, data["old"]))
         self.state.current = data["idx"]
+        # Case where the playlist is empty
         if self.state.current == -1:
-            pass
-            # special case handle later
+            self.state.state = self._STATE_UNKNOWN
+            return
+        self.state.dur = self.vidlist[self.state.current].seconds
+        if self.managing and "old" in data and data["old"] != -1:
+            if self.state.state == self._STATE_NORMAL_SWITCH and data["idx"] != data["old"]:
+                self.send("unqueue", {"pos": data["old"]})
+                self.state.state = self._STATE_UNKNOWN
 
     def playlistMeta(self, tag, data):
         if "count" in data and data["count"] != len(self.vidlist):
             self.logger.warn("Video list out of sync, restarting. This is serious. Tell Desuwa.")
             self.logger.warn("Expected: %d. Actual: %d" % (len(self.vidlist), data["count"]))
             self.close()
+    
+    def mediaUpdate(self, tag, data):
+        if self.state.state == self._STATE_UNKNOWN:
+            self.state.dur = data["seconds"]
 
+        time = data["currentTime"]
+        if time == -1: 
+            if self.state.dur - self.state.time <= 5.0:
+                # This should make false positives as rare as possible
+                self.state.state = self._STATE_NORMAL_SWITCH
+            else:
+                self.state.state = self._STATE_FORCED_SWITCH
+        else:
+            self.state.state = self._STATE_PLAYING
+        
+        self.state.time = data["currentTime"]
+        
+        # Add random videos a little in advance since there's no changeMedia equivalent
+        # Actually leading will allow more control over the room, but this is fine for now
+        # TODO -- Remove "managing" and just have her lead. Cytube's automatic management is nice normally but in this case they're just tripping over each other.
+        # This is probably preferable to waiting until it switches to the same video and instantly switching videos again
+        if self.managing and len(self.vidlist) <= 1 and self.state.dur - self.state.time <= 6 and self.state.time != -1:
+            self.sql_queue.append(package(self.addRandom, "addrandom", self.selfUser, ""))
+            self.sqlAction.set() 
+        
     def addMedia(self, tag, data):
         self._addVideo(data["media"], data["pos"])
 
@@ -1174,7 +1224,13 @@ class Naoko(object):
 
     # Serves as a decent enough indicator of initialization being done
     def channelOpts(self, tag, data):
-        self.doneInit = True
+        
+        if not self.doneInit:
+            if self.managing and self.state.state == self._STATE_UNKNOWN:
+                self.sql_queue.append(package(self.addRandom, "addrandom", self.selfUser, ""))
+                self.sqlAction.set()
+            self.doneInit = True
+
     
     # Automatically set the skip mode and take leader if applicable.
     # Setskip("none") will simply fail silently, so it is safe to call.
@@ -1269,6 +1325,17 @@ class Naoko(object):
         else: return
         self._writePersistentSettings()
 
+    @hasPermission("MANAGE")
+    def setPlaylistManagement(self, command, user, data):
+        d = data.lower()
+        if d == "on":
+            self.managing = True
+            self.enqueueMsg("Now actively managing the playlist.")
+        elif d == "off":
+            self.managing = False
+            self.enqueueMsg("No longer actively managing the playlist.")
+        else: return
+        self._writePersistentSettings()
 
     # Note: Should use numeric ranks in addition to admin = 3+, mods = 2+, users 1+ (what exactly is 0?)
     def setCommandLock(self, command, user, data):
@@ -1559,7 +1626,7 @@ class Naoko(object):
     def blacklist(self, command, user, data):
         # Rather arbitrary requirement of rank 5
         if user.rank < 5: return
-        
+        if self.state.current == -1: return
         target = self.vidlist[self.state.current]
         self.flagVideo(target.type, target.id, 0b10)
 
@@ -1657,7 +1724,10 @@ class Naoko(object):
         msg += ", Unregistered Spammers: "
         msg += "One Chance" if self.unregSpamBan else "3 Chances"
         msg += ", Command Lock: "
-        msg += "%s]" % (self.commandLock if self.commandLock else "Disabled")
+        msg += "%s, " % (self.commandLock if self.commandLock else "Disabled")
+        if not self.managing:
+            msg += "Not "
+        msg += "Managing Playlist]"
         self.sendChat(msg)
         if self.irc_nick and self.ircclient:
             self.ircclient.sendMsg(msg)
@@ -2174,11 +2244,12 @@ class Naoko(object):
         try:
             f = open("persistentsettings", "wb")
             f.write("# This is a file generated by Naoko.\n# Do not edit it manually unless you know what you are doing.\n")
-            f.write("1\n")
+            f.write("2\n") # Version number, increment whenever something is added to this function
             f.write("ON\n" if self.autoLead else "OFF\n")
             f.write("%s\n" % (self.autoSkip))
             f.write("ON\n" if self.unregSpamBan else "OFF\n")
             f.write("%s\n" % (self.commandLock))
+            f.write("ON\n" if self.managing else "OFF\n")
             f.write("ON\n" if self.hybridModStatus else "OFF\n")
             for h, v in self.hybridModList.iteritems():
                 if v:
@@ -2371,7 +2442,6 @@ class Naoko(object):
         if site == "vm":
             packet["type"] = "vi"
 
-        # Soundcloud videos will tend towards the bottom of the list
         self.send("queue", packet)
 
         self.api_queue.append(package(self._checkAddedVideo, site, vid))
