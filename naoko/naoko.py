@@ -93,7 +93,7 @@ CytubeUser = namedtuple("CytubeUser",
                            ["name", "rank", "leader", "meta", "msgs"])
 
 CytubeVideo = namedtuple("CytubeVideo",
-                              ["id", "title", "seconds", "type", "queueby"])
+                              ["id", "title", "seconds", "type", "queueby", "temp"])
                               # currentTime also exists. It seems to be the duration as a float, in seconds
                               # except for the currently playing video. Not included with 'queue' frames.
                               # Best to ignore it for now, but this information will be needed for leading
@@ -654,7 +654,9 @@ class Naoko(object):
                         "unqueue"           : self.removeMedia,
                         "moveVideo"         : self.moveMedia,
                         "chatFilters"       : self.ignore,
-                        "mediaUpdate"       : self.mediaUpdate}
+                        "mediaUpdate"       : self.mediaUpdate,
+                        "changeMedia"       : self.mediaUpdate,
+                        "setTemp"           : self.setTemp}
                         #leader  -- Use being leader as a signal to actively manage the playlist?
                                 # -- Requires actually implementing media switching and sending mediaUpdates every 5 seconds
                                                     # Note: seems to be 5 seconds regardless of if a media switch has occurred
@@ -673,7 +675,6 @@ class Naoko(object):
                         # poll information probably doesn't need to be tracked unless I need to track whether a poll is open
                                     # newPoll/updatePoll/closePoll
                         # seenlogins - used to determine valid targets for bans
-
 
     def _initCommandHandlers(self):
         """
@@ -924,10 +925,13 @@ class Naoko(object):
             self.state.state = self._STATE_UNKNOWN
             return
         self.state.dur = self.vidlist[self.state.current].seconds
-        if self.managing and "old" in data and data["old"] != -1:
-            if self.state.state == self._STATE_NORMAL_SWITCH and data["idx"] != data["old"]:
+
+        if self.managing and "old" in data: # Starting a new video
+            # playlistIdx doesn't get sent when videos are moved or deleted but check the player state anyway.
+            if self.state.state == self._STATE_NORMAL_SWITCH and data["old"] != -1 and data["idx"] != data["old"] and not self.vidlist[data["old"]].temp:
                 self.send("unqueue", {"pos": data["old"]})
                 self.state.state = self._STATE_UNKNOWN
+
 
     def playlistMeta(self, tag, data):
         if "count" in data and data["count"] != len(self.vidlist):
@@ -940,8 +944,11 @@ class Naoko(object):
             self.state.dur = data["seconds"]
 
         time = data["currentTime"]
-        if time == -1: 
-            if self.state.dur - self.state.time <= 5.0:
+        if tag == "changeMedia":
+            if self.managing and self.doneInit:
+                self.enqueueMsg("Playing: %s" % (data["title"]))
+                
+            if self.state.dur - self.state.time <= 6.0:
                 # This should make false positives as rare as possible
                 self.state.state = self._STATE_NORMAL_SWITCH
             else:
@@ -957,7 +964,12 @@ class Naoko(object):
         # This is probably preferable to waiting until it switches to the same video and instantly switching videos again
         if self.managing and len(self.vidlist) <= 1 and self.state.dur - self.state.time <= 6 and self.state.time != -1:
             self.sql_queue.append(package(self.addRandom, "addrandom", self.selfUser, ""))
-            self.sqlAction.set() 
+            self.sqlAction.set()
+
+    def setTemp(self, tag, data):
+        self.vidLock.acquire()
+        self.vidlist[data["idx"]] = self.vidlist[data["idx"]]._replace(temp=data["temp"])
+        self.vidLock.release()
         
     def addMedia(self, tag, data):
         self._addVideo(data["media"], data["pos"])
