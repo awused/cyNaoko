@@ -246,7 +246,7 @@ class Naoko(object):
         
         self.userlist = {}
         self.logger.info("Starting SocketIO Client")
-        self.client = SocketIOClient(DOMAIN, 8880, "socket.io", {"t": int(round(time.time() * 1000))})
+        self.client = SocketIOClient(SOCKET_IP, 80, "socket.io", {"t": int(round(time.time() * 1000))})
         
         # Various queues and events used to sychronize actions in separate threads
         # Some are initialized with maxlen = 0 so they will silently discard actions meant for non-existent threads

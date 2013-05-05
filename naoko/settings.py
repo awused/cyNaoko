@@ -25,7 +25,7 @@ HEARTBEAT_CHECK = 5
 # The domain name Naoko connects to. Right now only www.synchtube.com is going to work.
 DOMAIN = "cytube.calzoneman.net"
 # Need to hardcode Synchtube's IP
-SOCKET_IP = "173.255.204.78"
+SOCKET_IP = "192.249.56.89"
 
 # The minimum time between API requests in seconds
 API_THROTTLE = 0.5
