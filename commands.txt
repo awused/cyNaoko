@@ -33,7 +33,7 @@ help
 permute choice [choice ...]
     Responds with a permutation of the given choices.
 
-* quote [name]
+quote [name]
     Displays a random quote. If a name is provided it will pick a quote from users with that name.
     Will not display quotes from Naoko unless specifically asked to.
 
@@ -161,7 +161,7 @@ duplicates
     With neither Naoko will list all the current hybridmods with active permissions.
     This is written to the hybridmods file so the status will be maintained.
 
-* kick (name [reason]) | -unnamed | -unregistered
+kick (name [reason]) | -unnamed | -unregistered
     Hybrid mod permission +K.
     Kicks the specified user. The reason, which defaults to "Requested," is displayed to the user who is being kicked.
     If -unnamed or -unregistered is passed instead, it will kick all unnamed users or all unregistered users at once. Only real mods can use these values.
@@ -271,13 +271,13 @@ V - Autosetskip
 --- Naoko Administrator Only ---
 These functions are only available to the administrator of Naoko through telnet.
 
-clearRoom(bool kickSelf=False)
+* clearRoom(bool kickSelf=False)
     Kicks everyone in the room. No exceptions except Naoko herself, unless kickSelf is True.
     This function is a last resort for recovering access to rooms in unusual circumstances such as hanging connections.
     Invoking this with kickSelf set to True will reinitialize the room object, which will fix any errors related to the
     IP-based connection limit.
 
-importFile(string filename, string name=None)
+* importFile(string filename, string name=None)
     Opens <filename>.lst, which is a text file containing a list of urls to vidoes (such as are accepted by $add), one per line.
     Adds every video after verifying it as if it were added by a user with the provided name. If no name is provided they will not be stored in the database.
     This function can take a long time due to spacing out the adds to avoid spamming the Youtube API, and should be used sparingly.

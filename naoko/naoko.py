@@ -188,7 +188,7 @@ class Naoko(object):
         self._initIRCCommandHandlers()
         self._initPersistentSettings()
 
-        self.modList = set()
+        self.rankList = {}
         self.room_info = {}
         self.vidlist = []
         self.skipLevel = None
@@ -402,6 +402,11 @@ class Naoko(object):
                     name = data.split('!', 1)[0][1:]
                     msg = data[data.find("PRIVMSG " + self.channel + " :") + len("PRIVMSG " + self.channel + " :"):]
                     if not name == self.irc_nick:
+
+                        self.sql_queue.append(package(self.insertChat, msg=msg, username=name, 
+                                userid=name, timestamp=None, protocol='IRC', channel=self.channel, flags=None))
+                        self.sqlAction.set()
+
                         self.st_queue.append("(" + name + ") " + msg)
                         self.chatCommand(IRCUser(*(name, 1, False)), msg, True)
                     self.irc_logger.info("IRC %r:%r", name, msg)
@@ -656,7 +661,8 @@ class Naoko(object):
                         "chatFilters"       : self.ignore,
                         "mediaUpdate"       : self.mediaUpdate,
                         "changeMedia"       : self.mediaUpdate,
-                        "setTemp"           : self.setTemp}
+                        "setTemp"           : self.setTemp,
+                        "acl"               : self.acl}
                         #leader  -- Use being leader as a signal to actively manage the playlist?
                                 # -- Requires actually implementing media switching and sending mediaUpdates every 5 seconds
                                                     # Note: seems to be 5 seconds regardless of if a media switch has occurred
@@ -671,7 +677,6 @@ class Naoko(object):
                         #userCount
                         #drinkCount - probably ignore
                         #queueLock
-                        #acl - some kind of rank list for the entire channel - equivalent to the modlist?
                         # poll information probably doesn't need to be tracked unless I need to track whether a poll is open
                                     # newPoll/updatePoll/closePoll
                         # seenlogins - used to determine valid targets for bans
@@ -683,7 +688,6 @@ class Naoko(object):
                                 "mod"               : self.makeLeader,
                                 "lock"              : self.lock,
                                 "unlock"            : self.lock,
-                                "kick"              : self.kick,
                                 "ban"               : self.ban,
                                 "skip"              : self.skip,
                                 "lastbans"          : self.lastBans,
@@ -701,7 +705,6 @@ class Naoko(object):
                                 "unregspamban"      : self.setUnregSpamBan,
                                 "commandlock"       : self.setCommandLock,
                                 "add"               : self.add,
-                                "quote"             : self.quote,
                                 "accident"          : self.accident}"""
         self.commandHandlers = {
                                 # Functions that only result in chat messages being sent
@@ -734,7 +737,10 @@ class Naoko(object):
                                 "management"        : self.setPlaylistManagement,
                                 # Functions that require a database
                                 "addrandom"         : self.addRandom,
-                                "blacklist"         : self.blacklist}
+                                "blacklist"         : self.blacklist,
+                                "quote"             : self.quote,
+                                # Functions that change the states of users
+                                "kick"              : self.kick}
                                 
 
     def _initIRCCommandHandlers(self):
@@ -966,6 +972,11 @@ class Naoko(object):
             self.sql_queue.append(package(self.addRandom, "addrandom", self.selfUser, ""))
             self.sqlAction.set()
 
+    def acl(self, tag, data):
+        self.rankList = {}
+        for u in data:
+            self.rankList[u["name"]] = u["rank"]
+    
     def setTemp(self, tag, data):
         self.vidLock.acquire()
         self.vidlist[data["idx"]] = self.vidlist[data["idx"]]._replace(temp=data["temp"])
@@ -1199,15 +1210,16 @@ class Naoko(object):
         # Only interpret regular messages as commands
         if not data["msgclass"]:
             self.chatCommand(user, msg)
+        
+        # Don't log messages from IRC, may result in a few unlogged messages
+        if user.name != self.name or msg[0] != '(':
+            self.sql_queue.append(package(self.insertChat, msg=msg, username=user.name, 
+                    userid=user.name, timestamp=None, protocol='CT', channel=self.room, flags=None))
+            self.sqlAction.set()
 
-        """
-        self.sql_queue.append(package(self.insertChat, msg=msg, username=user.nick, 
-                    userid=user.uid, timestamp=None, protocol='ST', channel=self.room, flags=None))
-        self.sqlAction.set()
+        if user.rank >= 2 or user.name == self.name: return
 
-        if user.mod or user.sid == self.sid: return
-
-        user.msgs.append(time.time())
+        """user.msgs.append(time.time())
         span = user.msgs[-1] - user.msgs[0]
         if span < self.spam_interval * user.msgs.maxlen and len(user.msgs) == user.msgs.maxlen:
             self.logger.info("Attempted kick/ban of %s for spam", user.nick)
@@ -1842,27 +1854,19 @@ class Naoko(object):
         self.sqlAction.set()
     
     def _quote(self, name):
-        row = self.dbclient.getQuote(name, self.name)
+        row = self.dbclient.getQuote(name, [(self.name, "ST"), (self.irc_nick, "IRC"), (self.name, "CT")])
         if row:
-            self.enqueueMsg("[%s  %s] %s" % (row[0], datetime.fromtimestamp(row[2] / 1000).isoformat(' '), row[1])) 
+            self.enqueueMsg("[%s  %s-%s] %s" % (row[0], row[3],  datetime.fromtimestamp(row[2] / 1000).isoformat(' '), row[1])) 
 
     # Kick a single user by their name.
     # Two special arguments -unnamed and -unregistered.
     # Those commands kick all unnammed and unregistered users. 
+    @hasPermission("KICK")
     def kick(self, command, user, data):
-        if not data or not (user.mod or self.hasPermission(user, "KICK")): return
         args = data.split(' ', 1)
 
-        if args[0].lower() == "-unnamed":
-            if not user.mod: return
-            kicks = []
-            for u in self.userlist:
-                if self.userlist[u].nick == "unnamed":
-                    kicks.append(u)
-            self.logger.info("Kicking %d unnamed users requested by %s", len(kicks), user.nick)
-            self.asLeader(package(self._kickList, kicks))
-            return
-
+        # TODO -- handle guest users
+        """
         if args[0].lower() == "-unregistered":
             if not user.mod: return
             kicks = []
@@ -1873,15 +1877,15 @@ class Naoko(object):
                     kicks.append(u)
             self.logger.info("Kicking %d unregistered users requested by %s", len(kicks), user.nick)
             self.asLeader(package(self._kickList, kicks))
-            return
+            return"""
 
         target = self.getUserByNick(args[0])
-        if not target or target.mod: return
-        self.logger.info("Kick Target %s Requestor %s", target.nick, user.nick)
+        if not target or target.rank >= 2: return
+        self.logger.info("Kick Target %s Requestor %s", target.name, user.name)
         if len(args) > 1:
-            self.asLeader(package(self._kickUser, target.sid, args[1]))
+            self._kickUser(target.name, args[1])
         else:
-            self.asLeader(package(self._kickUser, target.sid))
+            self._kickUser(target.name)
 
     def _kickList(self, kicks):
         for k in kicks:
@@ -2064,7 +2068,7 @@ class Naoko(object):
 
     def getUserByNick(self, nick):
         name = self.filterString(nick, True)[1].lower()
-        try: return (u for u in self.userlist.itervalues() if u.nick.lower() == name).next()
+        try: return (u for u in self.userlist.itervalues() if u.name.lower() == name).next()
         except StopIteration: return None
 
     def getVideoIndexById(self, vid):
@@ -2217,6 +2221,7 @@ class Naoko(object):
         # Replace html tags with whatever they replaced
         output = re.sub(r"</?strong>", "*", output)
         output = re.sub(r"</?em>", "_", output)
+        output = re.sub(r"</?code>", "`", output)
 
 
         # Remove any other html tags that were added
@@ -2531,12 +2536,11 @@ class Naoko(object):
         self.logger.debug("Inserted %s after %s", video, self.vidlist[dest - 1])
         self.vidLock.release()
 
-    # Kick user using their sid(session id)
-    def _kickUser(self, sid, reason="Requested", sendMessage=True):
-        if not sid in self.userlist: return
+    # Kick user using their name (case-sensitive)
+    def _kickUser(self, name, reason="Requested", sendMessage=True):
         if sendMessage:
-            self.enqueueMsg("Kicked %s: (%s)" % (self.userlist[sid].nick, reason))
-        self.send("kick", [sid, reason])
+            self.enqueueMsg("Kicked %s: (%s)" % (name, reason))
+        self.sendChat("/kick %s %s" % (name, reason))
 
     # By default none of the functions use this.
     # Don't come crying to me if the bot bans the entire channel

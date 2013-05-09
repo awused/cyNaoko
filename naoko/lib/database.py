@@ -385,7 +385,8 @@ class NaokoDB(object):
             cur.execute("INSERT INTO chat VALUES(?, ?, ?, ?, ?, ?, ?)", chat)
         self.commit()
 
-    def getQuote(self, nick, exclude, protocol='ST'):
+    # excludes is now a list of (name, protocol) tupleS
+    def getQuote(self, nick, excludes=[], protocol=None):
         """
         Fetch a random quote out of the chat database from a user with a matching nick on the given protocol.
 
@@ -393,18 +394,23 @@ class NaokoDB(object):
 
         If no nick is supplied it will select from all users except the user exclude.
         """
-        select_cls = "SELECT username, msg, timestamp FROM chat "
-        where_cls = " WHERE protocol = ? AND msg NOT LIKE '/me%%' AND msg NOT LIKE '$%%' "
+        select_cls = "SELECT username, msg, timestamp, protocol FROM chat "
+        where_cls = " WHERE msg NOT LIKE '/me%%' AND msg NOT LIKE '$%%' "
         limit_cls = " ORDER BY RANDOM() LIMIT 1"
-        binds = (protocol,)
         
+        binds = ()
 
+        if protocol:
+            where_cls += " AND protocol = ? "
+            binds = (protocol,)
+            
         if nick:
             where_cls += " AND username = ? COLLATE NOCASE "
             binds += (nick,)
         else:
-            where_cls += " AND username != ? "
-            binds += (exclude,)
+            for e in excludes:
+                where_cls += " AND (username != ? or protocol != ?) "
+                binds += e
 
         sql = select_cls + where_cls + limit_cls
 
