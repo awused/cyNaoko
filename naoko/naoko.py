@@ -16,13 +16,11 @@ import sched, time, math
 import socket
 import struct
 import threading
-import urllib, urlparse, httplib
 import re
 from urllib2 import Request, urlopen
 from collections import namedtuple, deque
 import ConfigParser
 from datetime import datetime
-import code
 
 from lib.repl import Repl
 from settings import *
@@ -116,13 +114,7 @@ class Object(object):
 # second is uid, third is whether or not client is authenticated
 # fourth is avatar type, and so on.
 class Naoko(object):
-    _HEADERS = {'User-Agent' : 'NaokoBot',
-                'Accept' : 'text/html,application/xhtml+xml,application/xml;',
-                'Host' : DOMAIN,
-                'Connection' : 'keep-alive',
-                'Origin' : 'http://' + DOMAIN,
-                'Referer' : 'http://' + DOMAIN}
-
+    
     # Bitmasks for hybrid mods.
     MASKS = {
         "LEAD"          : (1, 'O'),         # O - Both the steal, lead, and mod commands.
@@ -243,10 +235,17 @@ class Naoko(object):
         # Tracks when she needs to update her playback status
         # This is used to interrupt her timer as she is waiting for the end of a video
         self.playerAction = threading.Event()
+
+        self.logger.info("Retrieving IO_URL")
+        io_url = urlopen("http://%s/r/assets/js/iourl.js" % (self.domain)).read()
+        # Unless someone has changed their iourl.js a lot this is going to work
+        io_url = io_url[io_url.rfind("const IO_URL"):].split('"')[1]
+        # Assume HTTP because Naoko can't handle other protocols anywa
+        socket_ip, socket_port = io_url[7:].split(':')
         
         self.userlist = {}
         self.logger.info("Starting SocketIO Client")
-        self.client = SocketIOClient(SOCKET_IP, 80, "socket.io", {"t": int(round(time.time() * 1000))})
+        self.client = SocketIOClient(socket_ip, int(socket_port), "socket.io", {"t": int(round(time.time() * 1000))})
         
         # Various queues and events used to sychronize actions in separate threads
         # Some are initialized with maxlen = 0 so they will silently discard actions meant for non-existent threads
@@ -313,8 +312,8 @@ class Naoko(object):
         # stdout/stderr, however print statements will probably be rerouted
         # to the socket.
         # This is not checked by the healthcheck
-        if REPL_PORT > 0:
-            self.repl = Repl(port=REPL_PORT, host='localhost', locals={"naoko": self})
+        if self.repl_port:
+            self.repl = Repl(port=int(self.repl_port), host='localhost', locals={"naoko": self})
 
         # Healthcheck loop, reports to the watchdog timer every 5 seconds
         while not self.closing.wait(5):
@@ -662,7 +661,8 @@ class Naoko(object):
                         "mediaUpdate"       : self.mediaUpdate,
                         "changeMedia"       : self.mediaUpdate,
                         "setTemp"           : self.setTemp,
-                        "acl"               : self.acl}
+                        "acl"               : self.acl,
+                        "usercount"         : self.userCount}
                         #leader  -- Use being leader as a signal to actively manage the playlist?
                                 # -- Requires actually implementing media switching and sending mediaUpdates every 5 seconds
                                                     # Note: seems to be 5 seconds regardless of if a media switch has occurred
@@ -670,11 +670,11 @@ class Naoko(object):
                         #updateUser - worry about selfUser, maybe make selfUser a function
                         #disconnect
                         #accouncement
+                        #voteskip (count, need)
                         #kick
                         #channelOpts
                         #banlist
                         #rank - probably ignore, seems to be included in any updateUser/addUser messages
-                        #userCount
                         #drinkCount - probably ignore
                         #queueLock
                         # poll information probably doesn't need to be tracked unless I need to track whether a poll is open
@@ -860,7 +860,7 @@ class Naoko(object):
         self.asLeader(package(self._banUser, sid, reason))
     
     def sendChat(self, msg):
-        self.logger.debug(repr(msg))
+        #self.logger.debug(repr(msg))
         self.send("chatMsg", {"msg": msg})
 
     def send(self, tag='', data=''):
@@ -1124,8 +1124,10 @@ class Naoko(object):
     def addUser(self, tag, data, isSelf=False):
         data["name"] == self.name
         self._addUser(data, data["name"] == self.name)
-        #self.storeUserCount()
-        #self.updateSkipLevel()
+  
+    # Stores the number of viewers, not just the number of named users
+    def userCount(self, tag, data):
+        self._storeUserCount(data["count"])
 
     def remUser(self, tag, data):
         try:
@@ -1134,8 +1136,6 @@ class Naoko(object):
                 del self.pending[data["name"]]
         except KeyError:
             self.logger.exception("Failure to delete user %s from %s", data["name"], self.userlist)
-        #self.storeUserCount()
-        #self.updateSkipLevel()
 
     def users(self, tag, data):
         for u in data:
@@ -1670,13 +1670,11 @@ class Naoko(object):
         self.sql_queue.append(package(self._lastBans, target, num))
         self.sqlAction.set()
 
-    def add(self, command, user, data, store=True):
-        if self.room_info["lock?"]:
-            if not (user.mod or self.hasPermission(user, "ADD")):
-                return
-        nick = user.nick
-        if not user.uid:
-            nick = ""
+    @hasPermission("ADD")
+    def add(self, command, user, data, store=True, permission=True):
+        #if self.room_info["lock?"] and not permission:
+            #return
+        nick = user.name
         site = False
         vid = False
         if data.find("youtube") != -1:
@@ -2086,10 +2084,9 @@ class Naoko(object):
             self.skipLevel = int(math.ceil(self.room_info["vote_settings"]["num"] * len(self.userlist) / 100.0))
         else:
             self.skipLevel = self.room_info["vote_settings"]["num"]
-    
+
     # logs the user count to the database
-    def storeUserCount(self):
-        count = len(self.userlist)
+    def _storeUserCount(self, count):
         storeTime = time.time()
         if storeTime - self.userCountTime > USER_COUNT_THROTTLE:
             self.userCountTime = storeTime
@@ -2582,6 +2579,8 @@ class Naoko(object):
         self.room_pw = config.get("naoko", "room_pw")
         self.name = config.get("naoko", "nick")
         self.pw   = config.get("naoko", "pass")
+        self.domain = config.get("naoko", "domain")
+        self.repl_port = config.get("naoko", "repl_port")
         self.hmod_admin = config.get("naoko", "hmod_admin").lower()
         self.spam_interval = float(config.get("naoko", "spam_interval"))
         self.skip_interval = float(config.get("naoko", "skip_interval"))

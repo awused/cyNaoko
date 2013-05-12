@@ -246,7 +246,7 @@ class SocketIOClient(object):
 
     def send(self, msg_type=3, sock_id='', end_pt='', data='', log=True):
         buf = "%s:%s:%s:%s" % (msg_type, sock_id, end_pt, data)
-        self.pkt_logger.debug("Sending %s", buf)
+        #self.pkt_logger.debug("Sending %s", buf)
         self.ws.send(buf, log)
 
     def sendHeartBeat(self):
@@ -267,7 +267,7 @@ class SocketIOClient(object):
         #    raise Exception("Ghost room detected. Attempting to reconnect")
     def checkHeartBeat(self):
         hb_diff = time.time() - self.last_hb
-        self.pkt_logger.debug("Time since last heartbeat %.3f", hb_diff)
+       # self.pkt_logger.debug("Time since last heartbeat %.3f", hb_diff)
         if hb_diff > TIMEOUT:
             raise Exception("Socket.IO Timeout, %.3f since last heartbeat" % (hb_diff))
         self.heartBeatEvent = self.sched.enter(HEARTBEAT_CHECK, 1, SocketIOClient.checkHeartBeat, [self])

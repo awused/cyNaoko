@@ -18,6 +18,20 @@
 
 Edit the included `naoko.conf` file to control the settings. By default the bot will join room "Science" with the nick "DenshiBot"
 
+Use the `$help` command to get a list of commands and their usage. Rooms will typically want Naoko to clean the playlist and automatically add videos; this can be enabled with `$management on`.
+
+## Interactive Console Usage
+By default the interactive console is disabled. Change repl\_port in `naoko.conf` to enable it.
+Telnet or another method of sending unencrypted messages to a port is required. Telnet is recommended.
+
+Open an interactive python console with:
+<pre>
+    telnet localhost 5001
+</pre>
+- Replace 5001 with your repl\_port
+
+This will open a python console where the object `naoko` is the current instance of the bot. You are able to access all of her member variables and functions. There are several functions designed to be used in the interactive console but most of them are not designed with this in mind. Some knowledge of Naoko and Python in general is necessary to perform more complex tasks.
+
 ## Web Server Usage
 By default the web server is disabled. Configure the web server in `naoko.conf`
 The webserver can be run in two modes: standalone, in which the web server is run as a separate daemon process, and embedded, in which the web server runs as part of Naoko.
@@ -29,6 +43,11 @@ To control standalone mode use:
 </pre>
 
 The web server can be run either as an http server using the bottle.py development server, which is slow but straightforward, or as a fastcgi server using flup. The fastcgi server only works in standalone mode. 
+
+## History by Desuwa
+With Synchtube's demise, our small animu community survived in IRC, waiting for a suitable replacement. Due to the work involved none of us were going to start our own replacement site. With CyTube being open source, actively developed, and not directly tied to any particular Synchtube room it seemed the obvious choice.
+
+The process of porting Naoko to CyTube is ongoing with her most important functionality already reimplemented.
 
 ## History by Falaina
 This is just a small explanation on how this code relates to the bot that used to be in the synchtube animu room.
