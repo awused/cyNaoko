@@ -662,7 +662,8 @@ class Naoko(object):
                         "changeMedia"       : self.mediaUpdate,
                         "setTemp"           : self.setTemp,
                         "acl"               : self.acl,
-                        "usercount"         : self.userCount}
+                        "usercount"         : self.userCount,
+                        "login"             : self.login}
                         #leader  -- Use being leader as a signal to actively manage the playlist?
                                 # -- Requires actually implementing media switching and sending mediaUpdates every 5 seconds
                                                     # Note: seems to be 5 seconds regardless of if a media switch has occurred
