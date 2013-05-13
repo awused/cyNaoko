@@ -88,7 +88,7 @@ eight_choices = [
 
 # Simple Record Types for variable synchtube constructs
 CytubeUser = namedtuple("CytubeUser",
-                           ["name", "rank", "leader", "meta", "msgs"])
+                           ["name", "rank", "leader", "meta", "profile", "msgs"])
 
 CytubeVideo = namedtuple("CytubeVideo",
                               ["id", "title", "seconds", "type", "queueby", "temp"])
@@ -265,7 +265,7 @@ class Naoko(object):
         self.client.connect()
 
         # Set a default selfUser with admin permissions, it will be updated later
-        self.selfUser = CytubeUser(self.name, 3, False, {"afk", False}, deque(maxlen=3))
+        self.selfUser = CytubeUser(self.name, 3, False, {"afk": False}, {"text": "", "image": ""}, deque(maxlen=3))
 
         # Connect to the room
         self.send("joinChannel", {"name": self.room})
