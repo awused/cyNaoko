@@ -947,7 +947,7 @@ class Naoko(object):
             self.close()
     
     def mediaUpdate(self, tag, data):
-        if self.state.state == self._STATE_UNKNOWN:
+        if self.state.state == self._STATE_UNKNOWN and tag == "changeMedia":
             self.state.dur = data["seconds"]
 
         time = data["currentTime"]
