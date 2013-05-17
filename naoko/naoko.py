@@ -239,7 +239,7 @@ class Naoko(object):
         self.logger.info("Retrieving IO_URL")
         io_url = urlopen("http://%s/r/assets/js/iourl.js" % (self.domain)).read()
         # Unless someone has changed their iourl.js a lot this is going to work
-        io_url = io_url[io_url.rfind("const IO_URL"):].split('"')[1]
+        io_url = io_url[io_url.rfind("var IO_URL"):].split('"')[1]
         # Assume HTTP because Naoko can't handle other protocols anywa
         socket_ip, socket_port = io_url[7:].split(':')
         
@@ -1879,7 +1879,7 @@ class Naoko(object):
             return"""
 
         target = self.getUserByNick(args[0])
-        if not target or target.rank >= 2: return
+        if not target or target.rank > user.rank: return
         self.logger.info("Kick Target %s Requestor %s", target.name, user.name)
         if len(args) > 1:
             self._kickUser(target.name, args[1])
