@@ -22,3 +22,6 @@ HEARTBEAT_CHECK = 5
 
 # The minimum time between API requests in seconds
 API_THROTTLE = 0.5
+
+# Countries a video must be able to play in
+COUNTRIES = set(["CA", "US", "GB", "DE"])

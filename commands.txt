@@ -51,7 +51,7 @@ wolfram query
 --- Synchtube Users Only ---
 These commands are usable by both mods and non-mods in the Synchtube chat, but not in IRC.
 
-* add link
+add link
     Adds the video found at the link to the playlist. The video is added to the sql database as if it were added through Synchtube.
     Only mods can add videos when the playlist is locked.
 
@@ -79,7 +79,7 @@ These commands are only available to Synchtube mods in Synchtube chat. Some comm
 There are no differences between mods and hybrid mods, save only that hybrid mods are not protected from some commands such as ban like real mods are, and they cannot use the
 special parameters for the kick command.
 
-* add link
+add link
     Hybrid mod permissions +H.
     Allows users to add videos while the list is locked.
 
@@ -176,8 +176,8 @@ kick (name [reason]) | -unnamed | -unregistered
     Can be used by the current leader of the room regardless of permissions.
     Changes the leader to Naoko.
 
-* lock
-* unlock
+lock
+unlock
     Hybrid mod permission +L.
     Locks or unlocks the playlist.
 

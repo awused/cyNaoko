@@ -663,7 +663,8 @@ class Naoko(object):
                         "setTemp"           : self.setTemp,
                         "acl"               : self.acl,
                         "usercount"         : self.userCount,
-                        "login"             : self.login}
+                        "login"             : self.login,
+                        "queueLock"         : self.queueLock}
                         #leader  -- Use being leader as a signal to actively manage the playlist?
                                 # -- Requires actually implementing media switching and sending mediaUpdates every 5 seconds
                                                     # Note: seems to be 5 seconds regardless of if a media switch has occurred
@@ -677,7 +678,6 @@ class Naoko(object):
                         #banlist
                         #rank - probably ignore, seems to be included in any updateUser/addUser messages
                         #drinkCount - probably ignore
-                        #queueLock
                         # poll information probably doesn't need to be tracked unless I need to track whether a poll is open
                                     # newPoll/updatePoll/closePoll
                         # seenlogins - used to determine valid targets for bans
@@ -687,8 +687,6 @@ class Naoko(object):
                                 "steal"             : self.steal,
                                 "lead"              : self.lead,
                                 "mod"               : self.makeLeader,
-                                "lock"              : self.lock,
-                                "unlock"            : self.lock,
                                 "ban"               : self.ban,
                                 "skip"              : self.skip,
                                 "lastbans"          : self.lastBans,
@@ -705,7 +703,6 @@ class Naoko(object):
                                 "shuffle"           : self.shuffleList,
                                 "unregspamban"      : self.setUnregSpamBan,
                                 "commandlock"       : self.setCommandLock,
-                                "add"               : self.add,
                                 "accident"          : self.accident}"""
         self.commandHandlers = {
                                 # Functions that only result in chat messages being sent
@@ -736,6 +733,9 @@ class Naoko(object):
                                 "purge"             : self.purge,
                                 "bump"              : self.bump,
                                 "management"        : self.setPlaylistManagement,
+                                "lock"              : self.lock,
+                                "unlock"            : self.lock,
+                                "add"               : self.add,
                                 # Functions that require a database
                                 "addrandom"         : self.addRandom,
                                 "blacklist"         : self.blacklist,
@@ -1121,6 +1121,9 @@ class Naoko(object):
                 raise Exception(data["error"])
             else:
                 raise Exception("Failed to login.")
+
+    def queueLock(self, tag, data):
+        self.room_info["locked"] = data["locked"]
 
     def addUser(self, tag, data, isSelf=False):
         data["name"] == self.name
@@ -1671,10 +1674,10 @@ class Naoko(object):
         self.sql_queue.append(package(self._lastBans, target, num))
         self.sqlAction.set()
 
-    @hasPermission("ADD")
+    @hasPermission("ADD", False)
     def add(self, command, user, data, store=True, permission=True):
-        #if self.room_info["lock?"] and not permission:
-            #return
+        if self.room_info["locked"] and not permission:
+            return
         nick = user.name
         site = False
         vid = False
@@ -1713,6 +1716,7 @@ class Naoko(object):
 
     # Add an individual video after verifying it
     def _add(self, site, vid, nick, store):
+        url = vid
         if site == "sc":
             vid = self.apiclient.resolveSoundcloud(vid)
             if not vid: return
@@ -1723,17 +1727,17 @@ class Naoko(object):
         title, dur, valid = data
         if valid:
             self.logger.debug("Adding video %s %s %s %s", title, site, vid, dur)
-            self.stExecute(package(self.asLeader, package(self.send, "am", [site, vid, self.filterString(title)[1], "http://i.ytimg.com/vi/%s/default.jpg" % (vid), dur])))
+            self._addVideoToList(site, vid, url) 
             if store and not dur == 0:
                 self.sql_queue.append(package(self.insertVideo, site, vid, title, dur, nick))
                 self.sqlAction.set()
         else:
             self.logger.debug("Invalid video %s %s %s, unable to add.", title, site, vid)
     
+    @hasPermission("LOCK")
     def lock(self, command, user, data):
-        if not (user.mod or self.hasPermission(user, "LOCK")): return
-        if self.room_info["lock?"] == (command == "lock"): return
-        self.asLeader(package(self.send, "lock?", command == "lock"))
+        if self.room_info["locked"] == (command == "lock"): return
+        self.send("queueLock", {"locked": command == "lock"})
 
     def status(self, command, user, data):
         msg = "Status = ["

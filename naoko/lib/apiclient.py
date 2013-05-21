@@ -213,7 +213,12 @@ class APIClient(object):
         if isinstance(data, dict) and not "error" in data:
             try:
                 data = data["data"]
-                return (data["title"], data["duration"], data["accessControl"]["embed"] == "allowed")
+                allowed = data["accessControl"]["embed"] == "allowed"
+                if "restrictions" in data:
+                    if data["restrictions"]["type"] == "country" and data["restrictions"]["relationship"] == "deny":
+                        allowed = allowed and not (REQUIRED_COUNTRIES & set(data["restrictions"]["countries"].split(" ")))
+
+                return (data["title"], data["duration"], allowed)
             except (TypeError, ValueError, KeyError) as e:
                 # Improperly formed Youtube API response
                 self.logger.warning("Invalid Youtube API response.")
