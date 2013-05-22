@@ -277,7 +277,7 @@ These functions are only available to the administrator of Naoko through telnet.
     Invoking this with kickSelf set to True will reinitialize the room object, which will fix any errors related to the
     IP-based connection limit.
 
-* importFile(string filename, string name=None)
+importFile(string filename, string name=None)
     Opens <filename>.lst, which is a text file containing a list of urls to vidoes (such as are accepted by $add), one per line.
     Adds every video after verifying it as if it were added by a user with the provided name. If no name is provided they will not be stored in the database.
     This function can take a long time due to spacing out the adds to avoid spamming the Youtube API, and should be used sparingly.

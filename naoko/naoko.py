@@ -1986,8 +1986,8 @@ class Naoko(object):
         f = False
         try:
             f = file("%s.lst" % (filename), "r")
-            user = SynchtubeUser(*self.selfUser)
-            user = user._replace(nick=name)
+            user = CytubeUser(*self.selfUser)
+            user = user._replace(name=str(name))
             for line in f:
                 self.add("add", user, line, name!=False)
         except Exception as e:
