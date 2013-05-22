@@ -2389,7 +2389,7 @@ class Naoko(object):
             # TODO - implement a stack of videos for removal later
             if safe:
                 self.enqueueMsg("Invalid video removed.")
-                self.stExecuite(package(self.asLeader, package(self.send, "unqueue", {"pos": idx})))
+                self.send("unqueue", {"pos": idx})
             return
         # Curl is missing or the duration is 0, don't insert it but leave it on the playlist
         if valid == "Unknown" or dur == 0: return
@@ -2399,6 +2399,10 @@ class Naoko(object):
             # Trust the external APIs over the Synchtube playlist.
             self.sql_queue.append(package(self.insertVideo, v.type, v_id, title, dur, v.queueby))
             self.sqlAction.set()
+        else: 
+            # Flag it as valid even if we don't add it
+            self.unflagVideo(v.type, v_id, 1)
+
 
     def _fixVideoID(self, v):
         v_id = v.id
@@ -2486,6 +2490,11 @@ class Naoko(object):
         # duration is for display purposes only and can be safely ignored
         if "duration" in v:
             del v["duration"]
+        
+        # Ignore paused for now, it'll probably go away
+        if "paused" in v:
+            del v["paused"]
+    
         # More effort to switch to "vi" than it is to just ignore it
         # Will make maitaining two versions or porting changes back to Naoko normal
         if v["type"] == "vi":
@@ -2495,7 +2504,8 @@ class Naoko(object):
 
         if not set(v.keys()) == set(CytubeVideo._fields):
             self.logger.warn("Video information has changed formats. Tell Desuwa. Ignoring new fields.")
-
+            
+            self.logger.debug ("New fields: %s" %(set(v.keys()) - set(CytubeVideo._fields)))
             for key in set(v.keys()) - set(CytubeVideo._fields):
                 del v[key]
        

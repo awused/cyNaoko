@@ -24,4 +24,4 @@ HEARTBEAT_CHECK = 5
 API_THROTTLE = 0.5
 
 # Countries a video must be able to play in
-COUNTRIES = set(["CA", "US", "GB", "DE"])
+REQUIRED_COUNTRIES = set(["CA", "US"])
