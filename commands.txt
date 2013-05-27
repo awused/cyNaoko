@@ -277,6 +277,11 @@ These functions are only available to the administrator of Naoko through telnet.
     Invoking this with kickSelf set to True will reinitialize the room object, which will fix any errors related to the
     IP-based connection limit.
 
+command(string message)
+    Executes the command in the given message as if it were requested in chat by Naoko herself.
+    Subject to all restrictions Naoko has based on her rank, including commandLock.
+    The message does not need to be prefixed by $.
+
 importFile(string filename, string name=None)
     Opens <filename>.lst, which is a text file containing a list of urls to vidoes (such as are accepted by $add), one per line.
     Adds every video after verifying it as if it were added by a user with the provided name. If no name is provided they will not be stored in the database.

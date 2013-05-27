@@ -1970,6 +1970,11 @@ class Naoko(object):
    
     # Telnet commands
     # Only callable through telnet
+    
+    # Executes a command as Naoko. Respects all the limits a user with her rank is subject to.
+    def command(self, msg):
+        msg = '$' + msg if msg [0] != '$' else msg 
+        self.stExecute(package(self.chatCommand, self.selfUser, msg)) 
 
     # Kicks everyone in the channel except Naoko.
     def clearRoom(self, kickSelf=False):
