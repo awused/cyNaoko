@@ -224,6 +224,7 @@ class APIClient(object):
                 # Improperly formed Youtube API response
                 print e
                 self.logger.warning("Invalid Youtube API response.")
+        elif data == "Unknown": return data
         return False
 
     def _getYoutubeAPI(self, vid):

@@ -2477,8 +2477,8 @@ class Naoko(object):
         
     def _checkAddedVideo(self, site, vid):
         data = self.apiclient.getVideoInfo(site, vid)
-        if not data or data == "Unknown": return
-        if not data[2]:
+        if data == "Unknown": return
+        if not data or not data[2]:
            self.flagVideo(site, vid, 1)
         
     # Add the video described by v_dict
