@@ -146,6 +146,8 @@ class Naoko(object):
         "SHUFFLE"       : 1 << 2}
 
     # Playback states
+    _STATE_VOTE_SKIP        = -4
+    _STATE_NORMAL_SKIP      = -3 # Switch initiated by Naoko
     _STATE_FORCED_SWITCH    = -2 # A switch initiated by a user before a video has finished
     _STATE_NORMAL_SWITCH    = -1 # A switch initiated normally at the end of a video
     _STATE_UNKNOWN          = 0
@@ -192,6 +194,7 @@ class Naoko(object):
         self.verboseBanlist = False
         self.unbanTarget = None
         self.shuffleBump = False
+        self.pendingSkip = False
 
         # Used to control taking and returning leader
         self.leader_queue = deque()
@@ -688,7 +691,6 @@ class Naoko(object):
                                 "lead"              : self.lead,
                                 "mod"               : self.makeLeader,
                                 "ban"               : self.ban,
-                                "skip"              : self.skip,
                                 "lastbans"          : self.lastBans,
                                 "lastban"           : self.lastBans,
                                 "unban"             : self.unban,
@@ -702,8 +704,7 @@ class Naoko(object):
                                 "endpoll"           : self.endPoll,
                                 "shuffle"           : self.shuffleList,
                                 "unregspamban"      : self.setUnregSpamBan,
-                                "commandlock"       : self.setCommandLock,
-                                "accident"          : self.accident}"""
+                                "commandlock"       : self.setCommandLock,"""
         self.commandHandlers = {
                                 # Functions that only result in chat messages being sent
                                 # These functions do not access the database directly, change the states of any users, modify the playlist, or have any effects outside of chat
@@ -736,6 +737,8 @@ class Naoko(object):
                                 "lock"              : self.lock,
                                 "unlock"            : self.lock,
                                 "add"               : self.add,
+                                "skip"              : self.skip,
+                                "accident"          : self.accident,
                                 # Functions that require a database
                                 "addrandom"         : self.addRandom,
                                 "blacklist"         : self.blacklist,
@@ -798,7 +801,19 @@ class Naoko(object):
         self.stAction.set()
 
     def nextVideo(self):
-        self.vidLock.acquire()
+        if not self.vidlist or len(self.vidlist) <= 1:
+            self.pendingSkip = True
+            if self.managing:
+                self.sql_queue.append(package(self.addRandom, "addrandom", self.selfUser, ""))
+                self.sqlAction.set()
+            else:
+                self.sql_queue.append(package(self.addRandom, "addrandom 1", self.selfUser, ""))
+                self.sqlAction.set()
+        else:
+            self.state.state = self._STATE_NORMAL_SKIP
+            self.send("playNext")
+
+        """self.vidLock.acquire()
         try:
             videoIndex = self.getVideoIndexById(self.state.current)
             if videoIndex == None:
@@ -819,7 +834,7 @@ class Naoko(object):
             self.state.time = int(round(time.time() * 1000))
         
         finally:
-            self.vidLock.release()
+            self.vidLock.release()"""
 
     def disableIRC(self, reason):
         self.irc_logger.warning(reason)
@@ -865,7 +880,9 @@ class Naoko(object):
         self.send("chatMsg", {"msg": msg})
 
     def send(self, tag='', data=''):
-        buf = {"name": tag, "args": [data]}
+        buf = {"name": tag}
+        if data:
+            buf["args"] = [data]
         try:
             buf = json.dumps(buf, encoding="utf-8")
         except UnicodeDecodeError:
@@ -935,7 +952,7 @@ class Naoko(object):
 
         if self.managing and "old" in data: # Starting a new video
             # playlistIdx doesn't get sent when videos are moved or deleted but check the player state anyway.
-            if self.state.state == self._STATE_NORMAL_SWITCH and data["old"] != -1 and data["idx"] != data["old"] and not self.vidlist[data["old"]].temp:
+            if (self.state.state == self._STATE_NORMAL_SWITCH or self.state.state == self._STATE_NORMAL_SKIP) and data["old"] != -1 and data["idx"] != data["old"] and not self.vidlist[data["old"]].temp:
                 self.send("unqueue", {"pos": data["old"]})
                 self.state.state = self._STATE_UNKNOWN
 
@@ -955,20 +972,19 @@ class Naoko(object):
             if self.managing and self.doneInit:
                 self.enqueueMsg("Playing: %s" % (data["title"]))
                 
+                
             if self.state.dur - self.state.time <= 6.0:
                 # This should make false positives as rare as possible
                 self.state.state = self._STATE_NORMAL_SWITCH
-            else:
+            elif self.state.state != self._STATE_NORMAL_SKIP:
                 self.state.state = self._STATE_FORCED_SWITCH
         else:
             self.state.state = self._STATE_PLAYING
         
         self.state.time = data["currentTime"]
         
-        # Add random videos a little in advance since there's no changeMedia equivalent
+        # Add random videos a little in advance since there's no atomic way to change to a new video
         # Actually leading will allow more control over the room, but this is fine for now
-        # TODO -- Remove "managing" and just have her lead. Cytube's automatic management is nice normally but in this case they're just tripping over each other.
-        # This is probably preferable to waiting until it switches to the same video and instantly switching videos again
         if self.managing and len(self.vidlist) <= 1 and self.state.dur - self.state.time <= 6 and self.state.time != -1:
             self.sql_queue.append(package(self.addRandom, "addrandom", self.selfUser, ""))
             self.sqlAction.set()
@@ -985,6 +1001,9 @@ class Naoko(object):
         
     def addMedia(self, tag, data):
         self._addVideo(data["media"], data["pos"])
+        if self.pendingSkip:
+            self.nextVideo()
+            self.pendingSkip = False
 
     def removeMedia(self, tag, data):
         self._removeVideo(data["pos"])
@@ -1282,14 +1301,14 @@ class Naoko(object):
     # Where command is the typed command, user is the user who sent the message
     # and data is everything following the command in the chat message
 
+    @hasPermission("SKIP")
     def skip(self, command, user, data):
-        if not (user.mod or self.hasPermission(user, "SKIP")): return
-        self.asLeader(self.nextVideo, deferred=self.DEFERRED_MASKS["SKIP"])
+        self.nextVideo()
 
+    @hasPermission("SKIP")
     def accident(self, command, user, data):
-        if not user.mod: return
         self.enqueueMsg("A terrible accident has befallen the currently playing video.")
-        self.asLeader(self.nextVideo, deferred=self.DEFERRED_MASKS["SKIP"])
+        self.nextVideo()
     
     # Set the skipping mode. Takes either on, off, x, or x%.
     def setSkip(self, command, user, data):

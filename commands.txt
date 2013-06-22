@@ -225,7 +225,7 @@ restart
     Hyrbid mod permissions +F.
     Shuffles the list and bumps the currently playing video to the top of the list.
 
-* skip
+skip
     Hybrid mod permission +S.
     Skips the current video and advances to the next video.
 
