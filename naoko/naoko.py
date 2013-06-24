@@ -654,11 +654,11 @@ class Naoko(object):
                         "userlist"          : self.users,
                         "addUser"           : self.addUser,
                         "userLeave"         : self.remUser,
-                        "updatePlaylistIdx" : self.playlistIndex,
-                        "updatePlaylistMeta": self.playlistMeta,
+                        "setPosition"       : self.playlistIndex,
+                        "setPlaylistMeta"   : self.playlistMeta,
                         "queue"             : self.addMedia,
                         "playlist"          : self.playlist,
-                        "unqueue"           : self.removeMedia,
+                        "delete"            : self.removeMedia,
                         "moveVideo"         : self.moveMedia,
                         "chatFilters"       : self.ignore,
                         "mediaUpdate"       : self.mediaUpdate,
@@ -677,6 +677,7 @@ class Naoko(object):
                         #accouncement
                         #voteskip (count, need)
                         #kick
+                        # rank
                         #channelOpts
                         #banlist
                         #rank - probably ignore, seems to be included in any updateUser/addUser messages
@@ -684,6 +685,7 @@ class Naoko(object):
                         # poll information probably doesn't need to be tracked unless I need to track whether a poll is open
                                     # newPoll/updatePoll/closePoll
                         # seenlogins - used to determine valid targets for bans
+                        # joinMessage
 
     def _initCommandHandlers(self):
         """
@@ -881,7 +883,7 @@ class Naoko(object):
 
     def send(self, tag='', data=''):
         buf = {"name": tag}
-        if data:
+        if data != '':
             buf["args"] = [data]
         try:
             buf = json.dumps(buf, encoding="utf-8")
@@ -940,20 +942,18 @@ class Naoko(object):
     # All of them receive input in the form (tag, data)
 
     def playlistIndex(self, tag, data):
-        if "old" in data and self.state.current != data["old"]:
-            self.logger.warn("playlistIndex out of sync. This might be serious. Tell Desuwa.")
-            self.logger.warn("Expected: %d. Actual: %d" % (self.state.current, data["old"]))
-        self.state.current = data["idx"]
+        old = self.state.current
+        self.state.current = data
         # Case where the playlist is empty
         if self.state.current == -1:
             self.state.state = self._STATE_UNKNOWN
             return
         self.state.dur = self.vidlist[self.state.current].seconds
 
-        if self.managing and "old" in data: # Starting a new video
+        if self.managing and (old or old == 0): # Starting a new video
             # playlistIdx doesn't get sent when videos are moved or deleted but check the player state anyway.
-            if (self.state.state == self._STATE_NORMAL_SWITCH or self.state.state == self._STATE_NORMAL_SKIP) and data["old"] != -1 and data["idx"] != data["old"] and not self.vidlist[data["old"]].temp:
-                self.send("unqueue", {"pos": data["old"]})
+            if (self.state.state == self._STATE_NORMAL_SWITCH or self.state.state == self._STATE_NORMAL_SKIP) and old != -1 and self.state.current != old and not self.vidlist[old].temp:
+                self.deleteMedia(old)
                 self.state.state = self._STATE_UNKNOWN
 
 
@@ -967,6 +967,7 @@ class Naoko(object):
         if self.state.state == self._STATE_UNKNOWN and tag == "changeMedia":
             self.state.dur = data["seconds"]
 
+        
         time = data["currentTime"]
         if tag == "changeMedia":
             if self.managing and self.doneInit:
@@ -1006,10 +1007,13 @@ class Naoko(object):
             self.pendingSkip = False
 
     def removeMedia(self, tag, data):
-        self._removeVideo(data["pos"])
+        self._removeVideo(data["position"])
+
+    def deleteMedia(self, pos):
+        self.send("delete", pos)
 
     def moveMedia(self, tag, data):
-        self._moveVideo(data["src"], data["dest"])
+        self._moveVideo(data["from"], data["to"])
 
     def playlist(self, tag, data):
         self.clear(tag, None)
@@ -1537,7 +1541,7 @@ class Naoko(object):
         self.logger.debug("Cleaning %d Videos", self.state.current)
         i = self.state.current - 1
         while i >= 0:
-            self.send("unqueue", {"pos": i})
+            self.deleteMedia(i)
             i -= 1
             
     # Clears any duplicate videos from the list
@@ -1596,7 +1600,7 @@ class Naoko(object):
     def _cleanPlaylist(self, targets):
         kill = sorted(targets, reverse=True) 
         for x in kill:
-            self.send("unqueue", {"pos": x})
+            self.deleteMedia(x)
     
     # Deletes the last video matching the given criteria. Same parameters as purge, but if nothing is given it will default to the last video
     # posted by the user who calls it.
@@ -2414,7 +2418,7 @@ class Naoko(object):
             # TODO - implement a stack of videos for removal later
             if safe:
                 self.enqueueMsg("Invalid video removed.")
-                self.send("unqueue", {"pos": idx})
+                self.deleteMedia(idx)
             return
         # Curl is missing or the duration is 0, don't insert it but leave it on the playlist
         if valid == "Unknown" or dur == 0: return
