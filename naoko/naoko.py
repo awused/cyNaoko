@@ -1013,7 +1013,7 @@ class Naoko(object):
 
     def playlist(self, tag, data):
         self.clear(tag, None)
-        for i, v in enumerate(data["pl"]):
+        for i, v in enumerate(data):
             # Don't add the entire playlist to the database
             # It's also unsafe to delete any videos detected as invalid
             self._addVideo(v, i, False, False)
@@ -1150,7 +1150,7 @@ class Naoko(object):
   
     # Stores the number of viewers, not just the number of named users
     def userCount(self, tag, data):
-        self._storeUserCount(data["count"])
+        self._storeUserCount(data)
 
     def remUser(self, tag, data):
         try:
@@ -2248,6 +2248,7 @@ class Naoko(object):
         output = re.sub(r"</?strong>", "*", output)
         output = re.sub(r"</?em>", "_", output)
         output = re.sub(r"</?code>", "`", output)
+        output = re.sub(r"</?s>", "~~", output)
 
 
         # Remove any other html tags that were added
