@@ -725,6 +725,7 @@ class Naoko(object):
                                 "translate"         : self.translate,
                                 "wolfram"           : self.wolfram,
                                 "quote"             : self.quote,
+                                "anagram"           : self.anagram,
                                 # Functions for controlling Naoko that do not affect the room or permissions
                                 "restart"           : self.restart,
                                 "mute"              : self.mute,
@@ -761,6 +762,7 @@ class Naoko(object):
                                    "cleverbot"          : self.cleverbot,
                                    "translate"          : self.translate,
                                    "wolfram"            : self.wolfram,
+                                   "anagram"            : self.anagram,
                                    "eval"               : self.eval,
                                    "help"               : self.help,
                                    "quote"              : self.quote}
@@ -1882,7 +1884,7 @@ class Naoko(object):
     def _quote(self, name):
         row = self.dbclient.getQuote(name, [(self.name, "ST"), (self.irc_nick, "IRC"), (self.name, "CT")])
         if row:
-            self.enqueueMsg("[%s  %s-%s] %s" % (row[0], row[3],  datetime.fromtimestamp(row[2] / 1000).isoformat(' '), row[1])) 
+            self.enqueueMsg("[%s %s-%s] %s" % (row[0], row[3],  datetime.fromtimestamp(row[2] / 1000).isoformat(' '), row[1])) 
 
     # Kick a single user by their name.
     # Two special arguments -unnamed and -unregistered.
@@ -1990,6 +1992,28 @@ class Naoko(object):
                 self.enqueueMsg("[%s] %s" % (query, out))
         else:
             self.enqueueMsg("Wolfram Alpha query failed.")
+    
+    # Queries the anagram bot with the provided string.
+    def anagram(self, command, user, data):
+        text = data
+        if len(text) < 7:
+            self.enqueueMsg("Message is too short.")
+            return
+        if len(text) > 30:
+            self.enqueueMsg("Message is too long.")
+            return
+        self.api_queue.append(package(self._anagram, text))
+        self.apiAction.set()
+    
+    def _anagram(self, text):
+        out = self.apiclient.anagram(text)
+        if out:
+            if out != -1:
+                self.enqueueMsg("%s -> %s" % (text, out))
+            else:
+                self.enqueueMsg("Message is too short.")
+        else:
+            self.enqueueMsg("Anagram failed.")
    
     # Telnet commands
     # Only callable through telnet

@@ -12,6 +12,9 @@ These commands are usable by all users, whether they're in IRC or Synchtube.
 8ball question
     Responds with one of the standard magic eight ball responses to the given question.
 
+anagram text
+    Returns an anagram of the given text.
+
 ask question
     Responds yes or no to the given question.
 

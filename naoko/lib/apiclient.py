@@ -4,6 +4,7 @@ import json
 import logging
 import subprocess
 import time
+import re
 from ssl import SSLError
 from urllib import urlencode, urlopen
 from httplib import HTTPConnection, HTTPSConnection
@@ -139,6 +140,31 @@ class APIClient(object):
             data = con.getresponse().read().decode("utf-8")
         except Exception as e:
             self.logger.warning("Failed to retrieve a valid response from the Wolfram Alpha API.")
+            self.logger.debug(e)
+        finally:
+            con.close()
+            return data
+
+    @throttle()
+    def anagram(self, text):
+        data = self._getAnagram(text)
+        if type(data) is str or type(data) is unicode:
+            if "Your text was too short.  We recommend 7-30 letters." in data:
+                return -1
+            m = re.match(r".*<span class=\"black-18\">'(.*)'</span>", data, re.DOTALL)
+            if m:
+                return m.groups()[0]
+        return None
+
+    def _getAnagram(self, text):
+        con = HTTPConnection("anagramgenius.com", timeout=20)
+        params = {"source_text"   : text.encode("utf-8")}
+        data = None
+        try:
+            con.request("GET", "/server.php?%s" % (urlencode(params)))
+            data = con.getresponse().read().decode("utf-8")
+        except Exception as e:
+            self.logger.warning("Failed to retrieve a valid response from the anagram server.")
             self.logger.debug(e)
         finally:
             con.close()
