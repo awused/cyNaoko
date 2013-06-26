@@ -1996,6 +1996,7 @@ class Naoko(object):
     # Queries the anagram bot with the provided string.
     def anagram(self, command, user, data):
         text = data
+        if not text: return
         if len(text) < 7:
             self.enqueueMsg("Message is too short.")
             return
@@ -2530,7 +2531,7 @@ class Naoko(object):
            self.flagVideo(site, vid, 1)
         
     # Add the video described by v_dict
-    def _addVideo(self, v_dict, idx, sql=True, safe=True):
+    def _addVideo(self, v_dict, idx, sql=True, safe=False):
         if self.stthread != threading.currentThread():
             raise Exception("_addVideo should not be called outside the Synchtube thread")
 
