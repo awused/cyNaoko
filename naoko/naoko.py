@@ -661,13 +661,14 @@ class Naoko(object):
                         "delete"            : self.removeMedia,
                         "moveVideo"         : self.moveMedia,
                         "chatFilters"       : self.ignore,
+                        "rank"              : self.ignore,
                         "mediaUpdate"       : self.mediaUpdate,
                         "changeMedia"       : self.mediaUpdate,
                         "setTemp"           : self.setTemp,
                         "acl"               : self.acl,
                         "usercount"         : self.userCount,
                         "login"             : self.login,
-                        "queueLock"         : self.queueLock}
+                        "setPlaylistLocked" : self.playlistLock}
                         #leader  -- Use being leader as a signal to actively manage the playlist?
                                 # -- Requires actually implementing media switching and sending mediaUpdates every 5 seconds
                                                     # Note: seems to be 5 seconds regardless of if a media switch has occurred
@@ -680,7 +681,6 @@ class Naoko(object):
                         # rank
                         #channelOpts
                         #banlist
-                        #rank - probably ignore, seems to be included in any updateUser/addUser messages
                         #drinkCount - probably ignore
                         # poll information probably doesn't need to be tracked unless I need to track whether a poll is open
                                     # newPoll/updatePoll/closePoll
@@ -947,7 +947,8 @@ class Naoko(object):
         old = self.state.current
         self.state.current = data
         # Case where the playlist is empty
-        if self.state.current == -1:
+        if self.state.current == -1 or not self.vidlist:
+            self.state.current = -1
             self.state.state = self._STATE_UNKNOWN
             return
         self.state.dur = self.vidlist[self.state.current].seconds
@@ -963,7 +964,8 @@ class Naoko(object):
         if "count" in data and data["count"] != len(self.vidlist):
             self.logger.warn("Video list out of sync, restarting. This is serious. Tell Desuwa.")
             self.logger.warn("Expected: %d. Actual: %d" % (len(self.vidlist), data["count"]))
-            self.close()
+            # TODO -- Re-enable this check later
+            #self.close()
     
     def mediaUpdate(self, tag, data):
         if self.state.state == self._STATE_UNKNOWN and tag == "changeMedia":
@@ -1147,7 +1149,7 @@ class Naoko(object):
             else:
                 raise Exception("Failed to login.")
 
-    def queueLock(self, tag, data):
+    def playlistLock(self, tag, data):
         self.room_info["locked"] = data["locked"]
 
     def addUser(self, tag, data, isSelf=False):
@@ -1700,7 +1702,7 @@ class Naoko(object):
         self.sqlAction.set()
 
     @hasPermission("ADD", False)
-    def add(self, command, user, data, store=True, permission=True):
+    def add(self, command, user, data, store=True, permission=True, wait=False):
         if self.room_info["locked"] and not permission:
             return
         nick = user.name
@@ -1736,7 +1738,10 @@ class Naoko(object):
             vid = data
 
         if site and (site == "sc" or self._checkVideoId(site, vid)):
-            self.api_queue.appendleft(package(self._add, site, vid, nick, store))
+            if wait:
+                self.api_queue.append(package(self._add, site, vid, nick, store))
+            else:
+                self.api_queue.appendleft(package(self._add, site, vid, nick, store))
             self.apiAction.set()
 
     # Add an individual video after verifying it
@@ -1762,7 +1767,7 @@ class Naoko(object):
     @hasPermission("LOCK")
     def lock(self, command, user, data):
         if self.room_info["locked"] == (command == "lock"): return
-        self.send("queueLock", {"locked": command == "lock"})
+        self.send("togglePlaylistLock", {"locked": command == "lock"})
 
     def status(self, command, user, data):
         msg = "Status = ["
@@ -2042,7 +2047,7 @@ class Naoko(object):
             user = CytubeUser(*self.selfUser)
             user = user._replace(name=str(name))
             for line in f:
-                self.add("add", user, line, name!=False)
+                self.add("add", user, line, name!=False, wait=True)
         except Exception as e:
             print e
             return
