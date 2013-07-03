@@ -902,29 +902,22 @@ class Naoko(object):
         self.unToss = package(self.send, "turnoff_tv")
         self.send("turnon_tv")
 
-    def checkVideo(self, vidinfo):
-        if not self.checkVideoId(vidinfo):
-            self.invalidVideo("Invalid video ID.")
-            return
-         
+    def checkVideo(self, site, vid): 
         # appendleft so it doesn't wait for the entire playlist to be checked
-        self.api_queue.appendleft(package(self._checkVideo, vidinfo))
+        self.api_queue.appendleft(package(self._checkVideo, site, vid))
         self.apiAction.set()
 
     # Skips the current invalid video if she is leading.
     # Otherwise saves that information for if she does take lead.
     def invalidVideo(self, reason):
-        if reason:
-            if self.leading.isSet():
-                self.enqueueMsg(reason)
-                self.nextVideo()
-            else:
-                self.state.reason = reason
+        if reason and self.managing:
+            self.enqueueMsg(reason)
+            self.nextVideo()
 
     # Kicks a user for something they did in chat
     # Tracks kicks by username for a three strikes policy
     def chatKick(self, user, reason):
-        if self.pending.has_key(user.sid):
+        if self.pending.has_key(user.name):
             return
         else:
             self.pending[user.sid] = True
@@ -974,8 +967,11 @@ class Naoko(object):
         
         time = data["currentTime"]
         if tag == "changeMedia":
-            if self.managing and self.doneInit:
-                self.enqueueMsg("Playing: %s" % (data["title"]))
+            if self.managing:
+                #self.api_queue.append(package
+                self.checkVideo(data["type"], data["id"])
+                if self.doneInit:
+                    self.enqueueMsg("Playing: %s" % (data["title"]))
                 
                 
             if self.state.dur - self.state.time <= 6.0:
@@ -1253,8 +1249,8 @@ class Naoko(object):
         """user.msgs.append(time.time())
         span = user.msgs[-1] - user.msgs[0]
         if span < self.spam_interval * user.msgs.maxlen and len(user.msgs) == user.msgs.maxlen:
-            self.logger.info("Attempted kick/ban of %s for spam", user.nick)
-            reason = "%s sent %d messages in %1.3f seconds" % (user.nick, len(user.msgs), span)
+            self.logger.info("Attempted kick/ban of %s for spam", user.name)
+            reason = "%s sent %d messages in %1.3f seconds" % (user.name, len(user.msgs), span)
             self.chatKick(user, reason)
         else:
             # Currently the only two blacklisted phrases are links to other Synchtube rooms.
@@ -1262,7 +1258,7 @@ class Naoko(object):
             m = re.search(r"(synchtube\.com\/r\/|synchtu\.be\/|clickbank\.net|\/muppet\/images\/4\/48\/LookAtMeBook\.jpg|chaturbate\.com|mylazysundays\.com)(%s)?" % (self.room), msg, re.IGNORECASE)
             if m and not m.groups()[1]:
                 self.logger.info("Attempted kick/ban of %s for blacklisted phrase", user.nick)
-                reason = "%s sent a blacklisted message" % (user.nick)
+                reason = "%s sent a blacklisted message" % (user.name)
                 self.chatKick(user, reason)"""
     
     def leader(self, tag, data):
@@ -1536,7 +1532,7 @@ class Naoko(object):
         bumpList = sorted(targets) 
         for t in bumpList:
             after += 1
-            self.send("moveMedia", {"src": t, "dest": after})
+            self.send("moveMedia", {"from": t, "to": after})
 
     # Cleans all the videos above the currently playing video
     @hasPermission("CLEAN")
@@ -2164,14 +2160,13 @@ class Naoko(object):
 
     # Returns whether or not a video id could possibly be valid
     # Guards against possible attacks and annoyances
-    def checkVideoId(self, vi):
-        if not vi.vid or not vi.site: return False
+    def checkVideoId(self, site, vid):
+        if not site or not vid: return False
 
-        vid = vi.vid
         if type(vid) is not str and type(vid) is not unicode:
             vid = str(vid)
         
-        return self._checkVideoId(vi.site, vid)
+        return self._checkVideoId(site, vid)
 
     def _checkVideoId(self, site, vid):
 
@@ -2386,8 +2381,17 @@ class Naoko(object):
 
     # Checks to see if the current video isn't invalid, blocked, or removed.
     # Also updates the duration if necessary to prevent certain types of annoying attacks on the room.
-    def _checkVideo(self, vi):
-        data = self.apiclient.getVideoInfo(vi.site, vi.vid)
+    def _checkVideo(self, site, vid):
+        url = vid
+        if site == "sc":
+            vid = self.apiclient.resolveSoundcloud(vid)
+            if not vid: return
+
+        if not self.checkVideoId(site, vid):
+            self.invalidVideo("Invalid video ID.")
+            return
+
+        data = self.apiclient.getVideoInfo(site, vid)
         if data:
             if data != "Unknown":
                 title, dur, embed = data
@@ -2398,14 +2402,14 @@ class Naoko(object):
                     return
                 # When someone has manually added a video with an incorrect duration.
                 elif self.state.dur != dur:
-                    if vi.site == "yt" and dur == 0:
+                    if site == "yt" and dur == 0:
                         # Live Youtube stream
                         self.logger.debug("Live Youtube stream detected.")
                         self.state.dur = DEFAULT_WAIT
                     else:
                         self.logger.debug("Duration mismatch: %d expected, %.3f actual." % (self.state.dur, dur))
                         self.state.dur = dur
-                    self.playerAction.set()
+                    #self.playerAction.set()
             return
         self.invalidVideo("Invalid video.")
 
