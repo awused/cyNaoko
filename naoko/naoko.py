@@ -91,12 +91,13 @@ CytubeUser = namedtuple("CytubeUser",
                            ["name", "rank", "leader", "meta", "profile", "msgs"])
 
 CytubeVideo = namedtuple("CytubeVideo",
-                              ["id", "title", "seconds", "type", "queueby", "temp"])
+                              ["vidinfo", "queueby", "temp", "uid"])
                               # currentTime also exists. It seems to be the duration as a float, in seconds
                               # except for the currently playing video. Not included with 'queue' frames.
                               # Best to ignore it for now, but this information will be needed for leading
 
                               # duration also exists but seems to be for display purposes only. It is currently ignored.
+CytubeVidInfo = namedtuple("CytubeVidInfo", ["type", "id", "title", "seconds"])
 
 IRCUser = namedtuple("IRCUser", ["name", "rank", "leader"])
 
@@ -654,7 +655,7 @@ class Naoko(object):
                         "userlist"          : self.users,
                         "addUser"           : self.addUser,
                         "userLeave"         : self.remUser,
-                        "setPosition"       : self.playlistIndex,
+                        "setCurrent"        : self.currentVideo,
                         "setPlaylistMeta"   : self.playlistMeta,
                         "queue"             : self.addMedia,
                         "playlist"          : self.playlist,
@@ -936,20 +937,29 @@ class Naoko(object):
     # Handlers for Synchtube message types
     # All of them receive input in the form (tag, data)
 
-    def playlistIndex(self, tag, data):
+    def currentVideo(self, tag, data):
         old = self.state.current
-        self.state.current = data
+        self.state.current = self.getVideoIndexById(data)
         # Case where the playlist is empty
         if self.state.current == -1 or not self.vidlist:
             self.state.current = -1
             self.state.state = self._STATE_UNKNOWN
             return
-        self.state.dur = self.vidlist[self.state.current].seconds
+        
+        # TODO -- Remove this quick fix
+        if self.state.dur - self.state.time <= 6.0:
+            # This should make false positives as rare as possible
+            self.state.state = self._STATE_NORMAL_SWITCH
+        elif self.state.state != self._STATE_NORMAL_SKIP:
+            self.state.state = self._STATE_FORCED_SWITCH
+        # END QUICK FIX 
+
+        self.state.dur = self.vidlist[self.state.current].vidinfo.seconds
 
         if self.managing and (old or old == 0): # Starting a new video
             # playlistIdx doesn't get sent when videos are moved or deleted but check the player state anyway.
             if (self.state.state == self._STATE_NORMAL_SWITCH or self.state.state == self._STATE_NORMAL_SKIP) and old != -1 and self.state.current != old and not self.vidlist[old].temp:
-                self.deleteMedia(old)
+                self.deleteMedia(self.vidlist[old].uid)
                 self.state.state = self._STATE_UNKNOWN
 
 
@@ -959,6 +969,8 @@ class Naoko(object):
             self.logger.warn("Expected: %d. Actual: %d" % (len(self.vidlist), data["count"]))
             # TODO -- Re-enable this check later
             #self.close()
+
+    lastPlay = "" # TODO -- REMOVE
     
     def mediaUpdate(self, tag, data):
         if self.state.state == self._STATE_UNKNOWN and tag == "changeMedia":
@@ -971,7 +983,10 @@ class Naoko(object):
                 #self.api_queue.append(package
                 self.checkVideo(data["type"], data["id"])
                 if self.doneInit:
-                    self.enqueueMsg("Playing: %s" % (data["title"]))
+                    # TODO -- REMOVE
+                    if data["title"] != self.lastPlay:
+                        self.enqueueMsg("Playing: %s" % (data["title"]))
+                        self.lastPlay = data["title"]
                 
                 
             if self.state.dur - self.state.time <= 6.0:
@@ -986,7 +1001,7 @@ class Naoko(object):
         
         # Add random videos a little in advance since there's no atomic way to change to a new video
         # Actually leading will allow more control over the room, but this is fine for now
-        if self.managing and len(self.vidlist) <= 1 and self.state.dur - self.state.time <= 6 and self.state.time != -1:
+        if self.managing and len(self.vidlist) <= 1 and self.state.dur - self.state.time <= 6 and (self.state.time != -1 or self.state.dur <= 6):
             self.sql_queue.append(package(self.addRandom, "addrandom", self.selfUser, ""))
             self.sqlAction.set()
 
@@ -1001,26 +1016,30 @@ class Naoko(object):
         self.vidLock.release()
         
     def addMedia(self, tag, data):
-        self._addVideo(data["media"], data["pos"])
+        self._addVideo(data["item"], self.getVideoIndexById(data["after"]) + 1)
         if self.pendingSkip:
             self.nextVideo()
             self.pendingSkip = False
 
     def removeMedia(self, tag, data):
-        self._removeVideo(data["position"])
+        self._removeVideo(data["uid"])
 
-    def deleteMedia(self, pos):
-        self.send("delete", pos)
+    def deleteMedia(self, uid):
+        self.send("delete", uid)
 
     def moveMedia(self, tag, data):
-        self._moveVideo(data["from"], data["to"])
+        if data["after"] == "prepend":
+            after = -1
+        else:
+            after = self.getVideoIndexById(data["after"])
+        self._moveVideo(self.getVideoIndexById(data["from"]), after + 1)
 
     def playlist(self, tag, data):
         self.clear(tag, None)
         for i, v in enumerate(data):
             # Don't add the entire playlist to the database
             # It's also unsafe to delete any videos detected as invalid
-            self._addVideo(v, i, False, False)
+            self._addVideo(v, i, False)
 
     def clear(self, tag, data):
         self.vidLock.acquire()
@@ -1217,7 +1236,7 @@ class Naoko(object):
                 self.deferredToss &= ~self.DEFERRED_MASKS["UNBAN"]
                 if not self.deferredToss:
                     self.tossLeader()
-
+    
     def kicked(self, tag, data):
         if self.doneInit:
             self.beingKicked = True
@@ -1541,7 +1560,7 @@ class Naoko(object):
         self.logger.debug("Cleaning %d Videos", self.state.current)
         i = self.state.current - 1
         while i >= 0:
-            self.deleteMedia(i)
+            self.deleteMedia(self.vidlist[i].uid)
             i -= 1
             
     # Clears any duplicate videos from the list
@@ -1551,15 +1570,14 @@ class Naoko(object):
         vids = set()
         i = 0
         while i < len(self.vidlist):
-            key = "%s:%s" % (self.vidlist[i].id, self.vidlist[i].type)
+            key = "%s:%s" % (self.vidlist[i].vidinfo.id, self.vidlist[i].vidinfo.type)
             if key in vids:
                 if not i == self.state.current:
-                    kill.append(i)
+                    kill.append(self.vidlist[i].uid)
             else:
                 vids.add(key)
             i += 1
         if kill:
-            kill.reverse()
             self._cleanPlaylist(kill)
     
     # Deletes all the videos posted by the specified user,
@@ -1588,18 +1606,17 @@ class Naoko(object):
 
         kill = []
         for i, v in enumerate(self.vidlist):
+            vi = v.vidinfo
             # Only purge videos that match all criteria
             if not i == self.state.current and (name == None or v.queueby.lower() == name) and (not duration 
-                    or v.seconds >= duration) and (not title or v.title.lower().find(title) != -1):
-                kill.append(i)
+                    or vi.seconds >= duration) and (not title or vi.title.lower().find(title) != -1):
+                kill.append(self.vidlist[i].uid)
         if kill:
-            kill.reverse()
             self._cleanPlaylist(kill)
     
     # targets is a list of integer video indices
     def _cleanPlaylist(self, targets):
-        kill = sorted(targets, reverse=True) 
-        for x in kill:
+        for x in targets:
             self.deleteMedia(x)
     
     # Deletes the last video matching the given criteria. Same parameters as purge, but if nothing is given it will default to the last video
@@ -1640,7 +1657,7 @@ class Naoko(object):
             if title and v.title.lower().find(title) == -1: continue
             # Durations
             if duration and v.seconds < duration: continue
-            kill.append(i)    
+            kill.append(self.vidlist[i].uid)    
 
         if kill:
             self._cleanPlaylist(kill)
@@ -1758,6 +1775,7 @@ class Naoko(object):
                 self.sql_queue.append(package(self.insertVideo, site, vid, title, dur, nick))
                 self.sqlAction.set()
         else:
+            self.flagVideo(site, vid, 0b1)
             self.logger.debug("Invalid video %s %s %s, unable to add.", title, site, vid)
     
     @hasPermission("LOCK")
@@ -2129,7 +2147,7 @@ class Naoko(object):
         except StopIteration: return None
 
     def getVideoIndexById(self, vid):
-        try: return (idx for idx, ele in enumerate(self.vidlist) if ele.v_sid == vid).next()
+        try: return (idx for idx, ele in enumerate(self.vidlist) if ele.uid == vid).next()
         except StopIteration: return -1
     
     # Updates the required skip level
@@ -2290,6 +2308,7 @@ class Naoko(object):
         # Unescape &gt; and &lt;
         output = output.replace("&gt;", ">")
         output = output.replace("&lt;", "<")
+        output = output.replace("&quot;", "\"")
 
         return output
 
@@ -2408,6 +2427,10 @@ class Naoko(object):
                         self.state.dur = DEFAULT_WAIT
                     else:
                         self.logger.debug("Duration mismatch: %d expected, %.3f actual." % (self.state.dur, dur))
+                        if abs(self.state.dur - dur) >= 1:
+                            self.logger.debug("Large mismatch detected, clearing Cytube cache.")
+                            self.send("uncache", {"id" : vid})
+                            self.invalidVideo("Duration Mismatch")
                         self.state.dur = dur
                     #self.playerAction.set()
             return
@@ -2416,21 +2439,23 @@ class Naoko(object):
     # Validates a video before inserting it into the database.
     # Will correct invalid durations and titles for videos.
     # This makes SQL inserts dependent on the external API.
-    def _validateAddVideo(self, v, sql, idx, safe):
+    def _validateAddVideo(self, v, sql, idx):
         # Don't insert videos added by Naoko.
         # We can also assume any video added by Naoko has passed her own checks
         if v.queueby == self.name: return
-        
+       
+        vi = v.vidinfo
+
         valid = True
         data = None
-        v_id = self._fixVideoID(v)
+        v_id = self._fixVideoID(v.vidinfo)
         if v_id == None:
             valid = False
         if v_id == False:
             valid = "Unknown"
 
         if valid and not valid == "Unknown":
-            data = self.apiclient.getVideoInfo(v.type, v_id)
+            data = self.apiclient.getVideoInfo(vi.type, v_id)
             if data == "Unknown":
                 # Do not store the video if it is invalid or from an unknown website.
                 # Trust that it is a video that will play.
@@ -2447,12 +2472,10 @@ class Naoko(object):
             self.logger.debug("Invalid video, skipping SQL insert.")
             self.logger.debug(data)
             # Flag the video as invalid.
-            self.flagVideo(v.type, v_id, 1)
-            # Go even further and remove it from the playlist completely, if it's safe
-            # TODO - implement a stack of videos for removal later
-            if safe:
-                self.enqueueMsg("Invalid video removed.")
-                self.deleteMedia(idx)
+            self.flagVideo(vi.type, v_id, 1)
+            # Go even further and remove it from the playlist completely
+            self.enqueueMsg("Invalid video removed.")
+            self.deleteMedia(v.uid)
             return
         # Curl is missing or the duration is 0, don't insert it but leave it on the playlist
         if valid == "Unknown" or dur == 0: return
@@ -2460,19 +2483,19 @@ class Naoko(object):
         if sql:
             # Insert the video using the retrieved title and duration.
             # Trust the external APIs over the Synchtube playlist.
-            self.sql_queue.append(package(self.insertVideo, v.type, v_id, title, dur, v.queueby))
+            self.sql_queue.append(package(self.insertVideo, vi.type, v_id, title, dur, v.queueby))
             self.sqlAction.set()
         else: 
             # Flag it as valid even if we don't add it
-            self.unflagVideo(v.type, v_id, 1)
+            self.unflagVideo(vi.type, v_id, 1)
 
 
-    def _fixVideoID(self, v):
-        v_id = v.id
-        if v.type == "sc":
+    def _fixVideoID(self, vi):
+        v_id = vi.id
+        if vi.type == "sc":
             # Soundcloud is special
             v_id = self.apiclient.resolveSoundcloud(v_id)
-        if v.type == "dm":
+        if vi.type == "dm":
             v_id = v_id[:6]
         return v_id   
 
@@ -2540,19 +2563,20 @@ class Naoko(object):
            self.flagVideo(site, vid, 1)
         
     # Add the video described by v_dict
-    def _addVideo(self, v_dict, idx, sql=True, safe=False):
+    def _addVideo(self, v_dict, idx, sql=True):
         if self.stthread != threading.currentThread():
             raise Exception("_addVideo should not be called outside the Synchtube thread")
 
+        vi = v_dict["media"].copy()
         v = v_dict.copy()
-        
+        del v["media"] 
 
         # currentTime seems to be useless to keep around since it is not available with "queue" messages
         if "currentTime" in v:
             del v["currentTime"]
         # duration is for display purposes only and can be safely ignored
-        if "duration" in v:
-            del v["duration"]
+        if "duration" in vi:
+            del vi["duration"]
         
         # Ignore paused for now, it'll probably go away
         if "paused" in v:
@@ -2560,30 +2584,42 @@ class Naoko(object):
     
         # More effort to switch to "vi" than it is to just ignore it
         # Will make maitaining two versions or porting changes back to Naoko normal
-        if v["type"] == "vi":
-            v["type"] = "vm"
+        if vi["type"] == "vi":
+            vi["type"] = "vm"
 
-        assert set(v.keys()) >= set(CytubeVideo._fields), "Video information has changed formats. Unable to continue. Tell Desuwa."
+        assert set(vi.keys()) >= set(CytubeVidInfo._fields), "Video information has changed formats. Unable to continue. Tell Desuwa."
+        assert set(v.keys()) >= set(CytubeVideo._fields) - set(["vidinfo"]), "Video information has changed formats. Unable to continue. Tell Desuwa."
 
-        if not set(v.keys()) == set(CytubeVideo._fields):
+        if not set(v.keys()) == set(CytubeVideo._fields) - set(["vidinfo"]):
             self.logger.warn("Video information has changed formats. Tell Desuwa. Ignoring new fields.")
             
             self.logger.debug ("New fields: %s" %(set(v.keys()) - set(CytubeVideo._fields)))
             for key in set(v.keys()) - set(CytubeVideo._fields):
                 del v[key]
+        
+        if not set(vi.keys()) == set(CytubeVidInfo._fields):
+            self.logger.warn("Video information has changed formats. Tell Desuwa. Ignoring new fields.")
+            
+            self.logger.debug ("New fields: %s" %(set(vi.keys()) - set(CytubeVidInfo._fields)))
+            for key in set(vi.keys()) - set(CytubeVidInfo._fields):
+                del vi[key]
        
+        vidinfo = CytubeVidInfo(**vi)
+        v ["vidinfo"] = vidinfo 
         vid = CytubeVideo(**v)
         self.vidLock.acquire()
         self.vidlist.insert(idx, vid)
         self.vidLock.release()
 
-        self.api_queue.append(package(self._validateAddVideo, vid, sql, idx, safe))
+        self.api_queue.append(package(self._validateAddVideo, vid, sql, idx))
         self.apiAction.set()
 
         
-    def _removeVideo(self, idx):
+    def _removeVideo(self, uid):
         if self.stthread != threading.currentThread():
             raise Exception("_removeVideo should not be called outside the Synchtube thread")
+        idx = self.getVideoIndexById(uid)
+        if idx == -1: return
         self.vidLock.acquire()
         self.vidlist.pop(idx)
         self.vidLock.release()

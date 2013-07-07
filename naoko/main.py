@@ -13,6 +13,7 @@ from settings import *
 MIN_DUR = 2.5
 
 kicked = False
+restarting = False
 
 # Set up logging
 logging.basicConfig(format='%(name)-15s:%(levelname)-8s - %(message)s', stream=sys.__stderr__)
@@ -23,10 +24,17 @@ logger.setLevel(LOG_LEVEL)
 class throttle:
     def __init__ (self, fn):
         self.fn = fn
+        self.delay = MIN_DUR
         self.last_call = 0
 
     def __call__ (self, *args, **kwargs):
-        remaining = MIN_DUR - time.time() + self.last_call
+        if not restarting and time.time() - self.last_call < 60:
+            self.delay *= 2
+            self.delay = self.delay if self.delay < 60 * 10 else 60*10
+        else:
+            self.delay = MIN_DUR
+        print "SLEEPING " + str(self.delay)
+        remaining = self.delay - time.time() + self.last_call
         if not kicked and remaining > 0:
             time.sleep(remaining)
         self.last_call = time.time()
@@ -46,6 +54,7 @@ def run(script):
     global kicked
     (child_pipe, child) = spawn (script)
     kicked = False
+    restarting = False
     print "[%s] Forked off (%d)\n" % (name, child.pid)
     try:
         while child_pipe.poll(TIMEOUT):
@@ -54,6 +63,7 @@ def run(script):
                 time.sleep(5)
                 break
             elif buf == "HEALTHY":
+                restarting = True
                 continue
             elif buf == "KICKED":
                 print "Kicked, attempting recovery"
