@@ -2588,6 +2588,12 @@ class Naoko(object):
         if vi["type"] == "vi":
             vi["type"] = "vm"
 
+        if "temp" not in v:
+            v["temp"] = False
+
+        if "queueby" not in v:
+            v["queueby"] = ""
+
         assert set(vi.keys()) >= set(CytubeVidInfo._fields), "Video information has changed formats. Unable to continue. Tell Desuwa."
         assert set(v.keys()) >= set(CytubeVideo._fields) - set(["vidinfo"]), "Video information has changed formats. Unable to continue. Tell Desuwa."
 
