@@ -33,7 +33,6 @@ class throttle:
             self.delay = self.delay if self.delay < 60 * 10 else 60*10
         else:
             self.delay = MIN_DUR
-        print "SLEEPING " + str(self.delay)
         remaining = self.delay - time.time() + self.last_call
         if not kicked and remaining > 0:
             time.sleep(remaining)

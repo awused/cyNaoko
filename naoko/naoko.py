@@ -1011,8 +1011,9 @@ class Naoko(object):
             self.rankList[u["name"]] = u["rank"]
     
     def setTemp(self, tag, data):
+        idx = self.getVideoIndexById(data["uid"])
         self.vidLock.acquire()
-        self.vidlist[data["idx"]] = self.vidlist[data["idx"]]._replace(temp=data["temp"])
+        self.vidlist[idx] = self.vidlist[idx]._replace(temp=data["temp"])
         self.vidLock.release()
         
     def addMedia(self, tag, data):
@@ -2014,7 +2015,7 @@ class Naoko(object):
     
     # Queries the anagram bot with the provided string.
     def anagram(self, command, user, data):
-        text = data
+        text = "".join(data.split())
         if not text: return
         if len(text) < 7:
             self.enqueueMsg("Message is too short.")
@@ -2022,7 +2023,7 @@ class Naoko(object):
         if len(text) > 30:
             self.enqueueMsg("Message is too long.")
             return
-        self.api_queue.append(package(self._anagram, text))
+        self.api_queue.append(package(self._anagram, data))
         self.apiAction.set()
     
     def _anagram(self, text):
