@@ -138,8 +138,8 @@ class Naoko(object):
         "SHUFFLE"       : ((1 << 18), 'F'), # F - Shuffle.
         "UNREGSPAMBAN"  : ((1 << 19), 'I'), # I - Change whether unregistered users are banned for spamming or have multiple chances.
         "ADD"           : ((1 << 20), 'H'), # H - Add when the list is locked.
-        "MANAGE"        : ((1 << 21), 'N')} # N - Enable or disable playlist management
-
+        "MANAGE"        : ((1 << 21), 'N'), # N - Enable or disable playlist management
+        "PLAYLISTS"     : ((1 << 22), 'Y')} # Y - Save or delete playlists
     # Bitmasks for deferred tosses
     DEFERRED_MASKS = {
         "SKIP"          : 1,
@@ -317,7 +317,7 @@ class Naoko(object):
         # to the socket.
         # This is not checked by the healthcheck
         if self.repl_port:
-            self.repl = Repl(port=int(self.repl_port), host='localhost', locals={"naoko": self})
+            self.repl = Repl(port=int(self.repl_port), host='localhost', locals={"naoko": self, "package": package})
 
         # Healthcheck loop, reports to the watchdog timer every 5 seconds
         while not self.closing.wait(5):
@@ -721,11 +721,15 @@ class Naoko(object):
                                 "help"              : self.help,
                                 "eval"              : self.eval,
                                 "steak"             : self.steak,
-                                # These functions query an external API or the database
+                                # Functions that require a database
+                                "addrandom"         : self.addRandom,
+                                "blacklist"         : self.blacklist,
+                                "quote"             : self.quote,
+                                "saveplaylist"      : self.savePlaylist,
+                                # Functions that query an external API
                                 "cleverbot"         : self.cleverbot,
                                 "translate"         : self.translate,
                                 "wolfram"           : self.wolfram,
-                                "quote"             : self.quote,
                                 "anagram"           : self.anagram,
                                 # Functions for controlling Naoko that do not affect the room or permissions
                                 "restart"           : self.restart,
@@ -743,10 +747,6 @@ class Naoko(object):
                                 "add"               : self.add,
                                 "skip"              : self.skip,
                                 "accident"          : self.accident,
-                                # Functions that require a database
-                                "addrandom"         : self.addRandom,
-                                "blacklist"         : self.blacklist,
-                                "quote"             : self.quote,
                                 # Functions that change the states of users
                                 "kick"              : self.kick}
                                 
@@ -806,8 +806,9 @@ class Naoko(object):
         self.stAction.set()
 
     def nextVideo(self):
-        if not self.vidlist or len(self.vidlist) <= 1:
+        if len(self.vidlist) == 1:
             self.pendingSkip = True
+        if not self.vidlist or len(self.vidlist) <= 1:
             if self.managing:
                 self.sql_queue.append(package(self.addRandom, "addrandom", self.selfUser, ""))
                 self.sqlAction.set()
@@ -1691,12 +1692,21 @@ class Naoko(object):
         self.sql_queue.append(package(self._addRandom, num, duration, title, username))
         self.sqlAction.set()
 
+    @hasPermission("PLAYLISTS")
+    def savePlaylist(self, command, user, data):
+        valid, name = self.filterString(data, True, False)
+        if not valid or not name:
+            self.enqueueMsg("Invalid playlist name.")
+            return
+        self.api_queue.append(package(self._fixPlaylist, name, [(v.vidinfo.type, v.vidinfo.id) for v in self.vidlist], user.name))
+        self.apiAction.set()
+
     # Blacklists the currently playing video so Naoko will ignore it
     def blacklist(self, command, user, data):
         # Rather arbitrary requirement of rank 5
         if user.rank < 5: return
         if self.state.current == -1: return
-        target = self.vidlist[self.state.current]
+        target = self.vidlist[self.state.current].vidinfo
         self.flagVideo(target.type, target.id, 0b10)
 
     # Retrieve the latest bans for the specified user
@@ -2269,8 +2279,8 @@ class Naoko(object):
             if isNick and ((o >= 48 and o <= 57) or (o >= 97 and o <= 122) or (o >= 65 and o <= 90) or o == 95):
                 output.append(c)
                 continue
-            valid = o > 31 and o != 127 and not (o >= 0xd800 and o <= 0xdfff) and o <= 0xffff
-            if (not isNick) and valid:
+            validChar = o > 31 and o != 127 and not (o >= 0xd800 and o <= 0xdfff) and o <= 0xffff
+            if (not isNick) and validChar:
                 output.append(c)
                 continue
             valid = False
@@ -2522,6 +2532,19 @@ class Naoko(object):
                 self.enqueueMsg("Last ban:")
             for r in rows:
                 self.enqueueMsg("%s - %s by %s - %s" % (r[3], datetime.fromtimestamp(r[0] / 1000).isoformat(' '), r[2], r[1]))
+
+    def _fixPlaylist(self, name, vids, nick):
+        cleanVids = []
+        for site, vid in vids:
+            if site == 'sc':
+                vid = self.apiclient.resolveSoundcloud(v_id)
+            cleanVids.append((site, vid)) 
+        self.sql_queue.append(package(self._savePlaylist, name, cleanVids, nick))
+        self.sqlAction.set()
+    
+    def _savePlaylist(self, name, vids, nick):
+        self.logger.debug("Storing playlist %s, length %d, by %s" % (name, len(vids), nick))
+        self.dbclient.insertPlaylist(name, vids, nick)
 
     def _addRandom(self, num, duration, title, user):
         self.logger.debug("Adding %d randomly selected videos, with title like %s, and duration no more than %s seconds, posted by user %s", num, title, duration, user)

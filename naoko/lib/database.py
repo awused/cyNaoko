@@ -71,6 +71,7 @@ class NaokoDB(object):
     _dbinfo_sql = "SELECT name FROM sqlite_master WHERE type='table'"
     _version_sql = "SELECT value FROM metadata WHERE key='dbversion'"
     _required_tables = set(["video_stats", "videos", "user_count", "bans", "chat"])
+    _foreign_keys = False
 
     # Low level database handling methods
     def __enter__(self):
@@ -157,6 +158,21 @@ class NaokoDB(object):
             for stmt in stmts:
                 self.executeDML(stmt)
             self.commit()
+        if version < 5:
+            stmts = ["CREATE TABLE IF NOT EXISTS playlistmeta(name TEXT, uname TEXT, length INTEGER, timestamp INTEGER, PRIMARY KEY(name))",
+                "CREATE TABLE IF NOT EXISTS playlists(name TEXT, idx INTEGER, type TEXT, id TEXT, PRIMARY KEY(name, idx), FOREIGN KEY(name) " +
+                            "REFERENCES playlistmeta(name), FOREIGN KEY(type, id) REFERENCES videos(type, id))",
+                "CREATE TABLE IF NOT EXISTS video_stats2(type TEXT, id TEXT, uname TEXT, FOREIGN KEY(type, id) REFERENCES videos(type, id))",
+                "INSERT INTO video_stats2(type, id, uname) SELECT type, id, uname FROM video_stats",
+                "DROP INDEX video_stats_idx",
+                "ALTER TABLE video_stats RENAME TO video_stats_backup",
+                "ALTER TABLE video_stats2 RENAME TO video_stats",
+                "CREATE INDEX IF NOT EXISTS video_stats_idx ON video_stats(type, id)",
+                "UPDATE metadata SET value = '5' WHERE key = 'dbversion'"]
+            for stmt in stmts:
+                self.executeDML(stmt)
+            self.commit()
+        self._foreign_keys = True
             
     @dbopen
     def initdb(self):
@@ -164,14 +180,16 @@ class NaokoDB(object):
         Initializes an empty sqlite3 database using .initscript.
         """
         self._update()
-        assert self._getVersion() >= 4
+        assert self._getVersion() >= 5
 
     @dbopen
     def cursor(self):
         """
         Returns an open cursor of type NaokoCursor.
         """
-        return self.con.cursor(NaokoCursor)
+        cur = self.con.cursor(NaokoCursor)
+        if self._foreign_keys: cur.execute("PRAGMA foreign_keys = ON");
+        return cur
 
     @dbopen
     def execute(self, stmt, *args):
@@ -454,6 +472,37 @@ class NaokoDB(object):
         self.executeDML("INSERT INTO video_stats VALUES(?, ?, ?)", (site, vid, nick))
         self.commit()
         self.unflagVideo(site, vid, 1)
+
+    def insertPlaylist(self, name, vids, nick):
+        """
+        Inserts a playlist into the database.
+
+        Takes the name of the playlist, the nick of the user, and a list of type, id pairs.
+
+        Erases the previous playlist with the same name.
+        """
+        self.deletePlaylist(name)
+        timestamp = int(time.time() * 1000)
+           # stmts = ["CREATE TABLE IF NOT EXISTS playlists(name TEXT, index INTEGER, type TEXT, id TEXT, primary key(name, index)",
+            #    "CREATE TABLE IF NOT EXISTS playlistmeta(name TEXT, uname TEXT, length INTEGER, timestamp INTEGER)",
+        self.logger.debug("Inserting %s into playlistmeta", (name, nick, len(vids), timestamp))
+        self.executeDML("INSERT INTO playlistmeta VALUES(?, ?, ?, ?)", (name, nick, len(vids), timestamp))
+        for idx, (site, id) in enumerate(vids):
+            try:
+                self.executeDML("INSERT INTO playlists VALUES(?, ?, ?, ?)", (name, idx, site, id))
+            except Exception as e:
+                if str(e) != "foreign key constraint failed": raise e
+        self.executeDML("UPDATE playlistmeta SET length = (SELECT COUNT(*) FROM playlists WHERE name = ?)", (name,))
+        self.commit()
+
+    def deletePlaylist(self, name):
+        """
+        Deletes the named playlist from the database
+        """
+        self.logger.debug("Deleting playlist: %s", (name,))
+        self.executeDML("DELETE FROM playlists WHERE name = ?", (name,))
+        self.executeDML("DELETE FROM playlistmeta WHERE name = ?", (name,))
+        self.commit()
 
     def insertUserCount(self, count, timestamp):
         """
