@@ -2194,7 +2194,7 @@ class Naoko(object):
 
         if type(vid) is not str and type(vid) is not unicode:
             vid = str(vid)
-        
+
         return self._checkVideoId(site, vid)
 
     def _checkVideoId(self, site, vid):
@@ -2416,6 +2416,8 @@ class Naoko(object):
         if site == "sc":
             vid = self.apiclient.resolveSoundcloud(vid)
             if not vid: return
+
+        if site == "vi": site = "vm"
 
         if not self.checkVideoId(site, vid):
             self.invalidVideo("Invalid video ID.")

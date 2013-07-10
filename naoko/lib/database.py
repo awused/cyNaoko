@@ -492,7 +492,7 @@ class NaokoDB(object):
                 self.executeDML("INSERT INTO playlists VALUES(?, ?, ?, ?)", (name, idx, site, id))
             except Exception as e:
                 if str(e) != "foreign key constraint failed": raise e
-        self.executeDML("UPDATE playlistmeta SET length = (SELECT COUNT(*) FROM playlists WHERE name = ?)", (name,))
+        self.executeDML("UPDATE playlistmeta SET length = (SELECT COUNT(*) FROM playlists WHERE playlists.name = playlistmeta.name) where name = ?", (name,))
         self.commit()
 
     def deletePlaylist(self, name):
