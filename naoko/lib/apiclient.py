@@ -257,7 +257,7 @@ class APIClient(object):
     def _getYoutubeAPI(self, vid):
         self.logger.debug("Retrieving video information from the Youtube API.")
         con = HTTPSConnection("gdata.youtube.com", timeout=10)
-        params = {"v" : 2, "alt": "jsonc"}
+        params = {"v": 2, "alt": "jsonc", "key": self.keys.yt_id}
         data = None
         try:
             con.request("GET", "/feeds/api/videos/%s?%s" % (vid, urlencode(params)))

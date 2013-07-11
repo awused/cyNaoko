@@ -2735,6 +2735,7 @@ class Naoko(object):
         self.apikeys.mst_secret = config.get("naoko", "mst_client_secret")
         self.apikeys.sc_id = config.get("naoko", "sc_client_id")
         self.apikeys.wf_id = config.get("naoko", "wolfram_id")
+        self.apikeys.yt_id = config.get("naoko", "youtube_id")
         self.webserver_mode = config.get("naoko", "webserver_mode")
         self.webserver_host = config.get("naoko", "webserver_host")
         self.webserver_port = config.get("naoko", "webserver_port")
