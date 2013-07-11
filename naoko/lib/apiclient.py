@@ -251,6 +251,7 @@ class APIClient(object):
                 print e
                 self.logger.warning("Invalid Youtube API response.")
         elif data == "Unknown": return data
+        elif isinstance(data, dict) and "message" in data["error"] and data["error"]["message"] == "Service Unavailable": return "Unknown"
         return False
 
     def _getYoutubeAPI(self, vid):

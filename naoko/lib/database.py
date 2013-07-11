@@ -172,15 +172,22 @@ class NaokoDB(object):
             for stmt in stmts:
                 self.executeDML(stmt)
             self.commit()
+        if version < 6:
+            stmts = ["DROP TABLE video_stats_backup",
+                "UPDATE videos SET flags = flags & ~1 WHERE type = 'yt'",
+                "UPDATE metadata SET value = '6' WHERE key = 'dbversion'"]
+            for stmt in stmts:
+                self.executeDML(stmt)
+            self.commit()
         self._foreign_keys = True
-            
+ 
     @dbopen
     def initdb(self):
         """
         Initializes an empty sqlite3 database using .initscript.
         """
         self._update()
-        assert self._getVersion() >= 5
+        assert self._getVersion() >= 6
 
     @dbopen
     def cursor(self):

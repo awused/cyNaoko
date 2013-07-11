@@ -971,8 +971,6 @@ class Naoko(object):
             # TODO -- Re-enable this check later
             #self.close()
 
-    lastPlay = "" # TODO -- REMOVE
-    
     def mediaUpdate(self, tag, data):
         if self.state.state == self._STATE_UNKNOWN and tag == "changeMedia":
             self.state.dur = data["seconds"]
@@ -981,15 +979,12 @@ class Naoko(object):
         time = data["currentTime"]
         if tag == "changeMedia":
             if self.managing:
-                #self.api_queue.append(package
-                self.checkVideo(data["type"], data["id"])
+                if data["type"] in ["yt", "bt", "dm", "vi", "sc"]:
+                    self.checkVideo(data["type"], data["id"])
+
                 if self.doneInit:
-                    # TODO -- REMOVE
-                    if data["title"] != self.lastPlay:
-                        self.enqueueMsg("Playing: %s" % (data["title"]))
-                        self.lastPlay = data["title"]
-                
-                
+                    self.enqueueMsg("Playing: %s" % (data["title"]))
+ 
             if self.state.dur - self.state.time <= 6.0:
                 # This should make false positives as rare as possible
                 self.state.state = self._STATE_NORMAL_SWITCH
