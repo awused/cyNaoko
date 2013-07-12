@@ -663,6 +663,9 @@ class Naoko(object):
                         "moveVideo"         : self.moveMedia,
                         "chatFilters"       : self.ignore,
                         "rank"              : self.ignore,
+                        "closePoll"         : self.ignore,
+                        "newPoll"           : self.ignore,
+                        "updatePoll"        : self.ignore,
                         "mediaUpdate"       : self.mediaUpdate,
                         "changeMedia"       : self.mediaUpdate,
                         "setTemp"           : self.setTemp,
@@ -703,8 +706,6 @@ class Naoko(object):
                                 "permissions"       : self.permissions,
                                 "autolead"          : self.autoLeader,
                                 "autosetskip"       : self.autoSetSkip,
-                                "poll"              : self.poll,
-                                "endpoll"           : self.endPoll,
                                 "shuffle"           : self.shuffleList,
                                 "unregspamban"      : self.setUnregSpamBan,
                                 "commandlock"       : self.setCommandLock,"""
@@ -721,6 +722,8 @@ class Naoko(object):
                                 "help"              : self.help,
                                 "eval"              : self.eval,
                                 "steak"             : self.steak,
+                                "poll"              : self.poll,
+                                "endpoll"           : self.endPoll,
                                 # Functions that require a database
                                 "addrandom"         : self.addRandom,
                                 "blacklist"         : self.blacklist,
@@ -747,6 +750,7 @@ class Naoko(object):
                                 "add"               : self.add,
                                 "skip"              : self.skip,
                                 "accident"          : self.accident,
+                                "loadplaylist"      : self.loadPlaylist,
                                 # Functions that change the states of users
                                 "kick"              : self.kick}
                                 
@@ -1433,8 +1437,8 @@ class Naoko(object):
         #self.enqueueMsg("I refuse; you are beneath me.")
 
     # Creates a poll given an asterisk separated list of strings containing the title and at least two choices.
+    @hasPermission("POLL")
     def poll(self, command, user, data):
-        if not (user.mod or self.hasPermission(user, "POLL")): return
         elements = data.split("*")
         # Filter out any empty or whitespace strings
         i = len(elements) - 1
@@ -1443,15 +1447,12 @@ class Naoko(object):
                 elements.pop(i)
             i-=1
         if len(elements) < 3: return
-        self.asLeader(package(self._poll, list(elements)))
+        self.send("closePoll")
+        self.send("newPoll", {"title": elements[0], "opts": elements[1:]})   
 
-    def _poll(self, elements):
-        self.send("close_poll")
-        self.send("init_poll", [elements[0], elements[1:]])   
-
+    @hasPermission("POLL")
     def endPoll(self, command, user, data):
-        if not (user.mod or self.hasPermission(user, "POLL")): return
-        self.asLeader(package(self.send, "close_poll"))
+        self.send("closePoll")
 
     @hasPermission("MUTE")
     def mute(self, command, user, data):
@@ -1695,6 +1696,10 @@ class Naoko(object):
             return
         self.api_queue.append(package(self._fixPlaylist, name, [(v.vidinfo.type, v.vidinfo.id) for v in self.vidlist], user.name))
         self.apiAction.set()
+
+    # TODO -- similar permissions similar to addrandom
+    def loadPlaylist(self, command, user, data):
+       pass 
 
     # Blacklists the currently playing video so Naoko will ignore it
     def blacklist(self, command, user, data):

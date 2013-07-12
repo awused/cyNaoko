@@ -155,7 +155,7 @@ duplicates
     Deletes duplicate videos from the playlist. Will not remove the currently playing video even if it is a duplicate.
     Leaves the first occurence of any duplicated video on the list, even if it is above the currently playing video.
 
-* endpoll
+endpoll
     Hybrid mod permissions +G.
     Ends the current poll.
 
@@ -202,7 +202,7 @@ unmute
     Give or remove permissions to the specified hybrid mod. Flags for permissions are defined below.
     If no changes are specified, or if changes do take place, Naoko will display the current permissions of the hybrid mod.
 
-* poll title*option*option[*option...]
+poll title*option*option[*option...]
     Hybrid mod permission +P.
     Creates a poll with the given list of asterisk separated options and the given title, at least two choices are required.
 

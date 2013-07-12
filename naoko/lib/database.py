@@ -259,7 +259,6 @@ class NaokoDB(object):
 
 
     # Higher level video/poll/chat-related APIs
-    # TODO -- Implement blockedSites
     def getVideos(self, num=None, columns=None, orderby=None, duration_s=None, title=None, user=None, blockedFlags=0b11, blockedSites = []):
         """
         Retrieves videos from the video_stats table of Naoko's database.
@@ -501,6 +500,55 @@ class NaokoDB(object):
                 if str(e) != "foreign key constraint failed": raise e
         self.executeDML("UPDATE playlistmeta SET length = (SELECT COUNT(*) FROM playlists WHERE playlists.name = playlistmeta.name) where name = ?", (name,))
         self.commit()
+    
+    # Higher level video/poll/chat-related APIs
+    def getPlaylist(self, name, blockedFlags=0b11, blockedSites = []):
+        """
+        Retrieves an ordered playlist.
+
+        num must be an integer specifying the maximum number of rows to return.
+        By default all rows are retrieved
+
+        columns must be an iterable specifying which columns to retrieve. By default
+        all columns will be retrieved. See naoko.sql for database schema.
+
+        orderby must be a tuple specifying the orderby clause. Valid values are
+        ('id', 'ASC'), ('id', 'DESC'), or ('RANDOM()')
+
+        The statement executed against the database will roughly be
+        SELECT <columns> FROM video_stats vs, videos v
+            WHERE vs.type = v.type AND vs.id = v.id
+            [ORDER BY <orderby>] [LIMIT ?]
+        """
+
+        binds = (name,)
+        sel_cls = "SELECT type, id FROM playlists p INNER JOIN videos v ON p.id = v.id AND p.type = v.type "
+        where_cls = " WHERE p.name = ? "
+        order_cls = " ORDER BY p.idx DESC"
+       
+        if isinstance(blockedFlags, (int, long)):
+            where_cls += " AND v.flags & ? = 0 "
+            binds += (blockedFlags,)
+
+        if isinstance(blockedSites, (list, tuple)):
+            sites_cls = " AND v.type NOT IN ("
+            flg = False
+            for b in blockedSites:
+                if isinstance(b, (str, unicode)) and len(b) == 2:
+                    if flg:
+                        sites_cls += ","
+                    sites_cls += "?"
+                    binds += (b,)
+                    flg = True
+            if flg:
+                where_cls += sites_cls + ") "
+
+        sql = sel_cls + where_cls + order_cls
+
+        self.logger.debug("Generated SQL %s" % (sql))
+
+        with self.execute(sql, binds) as cur:
+            return cur.fetchall()
 
     def deletePlaylist(self, name):
         """
