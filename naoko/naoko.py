@@ -371,8 +371,7 @@ class Naoko(object):
             except KeyError:
                 self.logger.warn("No handler for %s [%s]", st_type, arg)
             else:
-                self.st_action_queue.append(package(fn, st_type, arg))
-                self.stAction.set()
+                self.stExecute(package(fn, st_type, arg))
         else:
             self.logger.info("Synchtube Listening Loop Closed")
             self.close()
@@ -406,9 +405,8 @@ class Naoko(object):
                     msg = data[data.find("PRIVMSG " + self.channel + " :") + len("PRIVMSG " + self.channel + " :"):]
                     if not name == self.irc_nick:
 
-                        self.sql_queue.append(package(self.insertChat, msg=msg, username=name, 
+                        self.sqlExecute(package(self.insertChat, msg=msg, username=name, 
                                 userid=name, timestamp=None, protocol='IRC', channel=self.channel, flags=None))
-                        self.sqlAction.set()
 
                         self.st_queue.append("(" + name + ") " + msg)
                         self.chatCommand(IRCUser(*(name, 1, False)), msg, True)
@@ -666,6 +664,7 @@ class Naoko(object):
                         "closePoll"         : self.ignore,
                         "newPoll"           : self.ignore,
                         "updatePoll"        : self.ignore,
+                        "queueFail"         : self.ignore, # Might want to catch these if there's ever something cytube catches that Naoko doesn't
                         "mediaUpdate"       : self.mediaUpdate,
                         "changeMedia"       : self.mediaUpdate,
                         "setTemp"           : self.setTemp,
@@ -809,16 +808,22 @@ class Naoko(object):
         self.st_action_queue.append(action)
         self.stAction.set()
 
+    def sqlExecute(self, action):
+        self.sql_queue.append(action)
+        self.sqlAction.set()
+
+    def apiExecute(self, action):
+        self.api_queue.append(action)
+        self.apiAction.set()
+
     def nextVideo(self):
         if len(self.vidlist) == 1:
             self.pendingSkip = True
         if not self.vidlist or len(self.vidlist) <= 1:
             if self.managing:
-                self.sql_queue.append(package(self.addRandom, "addrandom", self.selfUser, ""))
-                self.sqlAction.set()
+                self.stExecute(package(self.addRandom, "addrandom", self.selfUser, ""))
             else:
-                self.sql_queue.append(package(self.addRandom, "addrandom 1", self.selfUser, ""))
-                self.sqlAction.set()
+                self.stExecute(package(self.addRandom, "addrandom 1", self.selfUser, ""))
         else:
             self.state.state = self._STATE_NORMAL_SKIP
             self.send("playNext")
@@ -1002,8 +1007,7 @@ class Naoko(object):
         # Add random videos a little in advance since there's no atomic way to change to a new video
         # Actually leading will allow more control over the room, but this is fine for now
         if self.managing and len(self.vidlist) <= 1 and self.state.dur - self.state.time <= 6 and (self.state.time != -1 or self.state.dur <= 6):
-            self.sql_queue.append(package(self.addRandom, "addrandom", self.selfUser, ""))
-            self.sqlAction.set()
+            self.sqlExecute(package(self.addRandom, "addrandom", self.selfUser, ""))
 
     def acl(self, tag, data):
         self.rankList = {}
@@ -1260,9 +1264,8 @@ class Naoko(object):
         
         # Don't log messages from IRC, may result in a few unlogged messages
         if user.name != self.name or msg[0] != '(':
-            self.sql_queue.append(package(self.insertChat, msg=msg, username=user.name, 
+            self.sqlExecute(package(self.insertChat, msg=msg, username=user.name, 
                     userid=user.name, timestamp=None, protocol='CT', channel=self.room, flags=None))
-            self.sqlAction.set()
 
         if user.rank >= 2 or user.name == self.name: return
 
@@ -1298,8 +1301,7 @@ class Naoko(object):
         
         if not self.doneInit:
             if self.managing and self.state.state == self._STATE_UNKNOWN:
-                self.sql_queue.append(package(self.addRandom, "addrandom", self.selfUser, ""))
-                self.sqlAction.set()
+                self.stExecute(package(self.addRandom, "addrandom", self.selfUser, ""))
             self.doneInit = True
 
     
@@ -1685,8 +1687,7 @@ class Naoko(object):
         except (TypeError, ValueError) as e:
             if num: return
             num = 5
-        self.sql_queue.append(package(self._addRandom, num, duration, title, username))
-        self.sqlAction.set()
+        self.sqlExecute(package(self._addRandom, num, duration, title, username))
 
     @hasPermission("PLAYLISTS")
     def savePlaylist(self, command, user, data):
@@ -1694,12 +1695,14 @@ class Naoko(object):
         if not valid or not name:
             self.enqueueMsg("Invalid playlist name.")
             return
-        self.api_queue.append(package(self._fixPlaylist, name, [(v.vidinfo.type, v.vidinfo.id) for v in self.vidlist], user.name))
-        self.apiAction.set()
+        self.apiExecute(package(self._fixPlaylist, name, [(v.vidinfo.type, v.vidinfo.id) for v in self.vidlist], user.name))
 
     # TODO -- similar permissions similar to addrandom
-    def loadPlaylist(self, command, user, data):
-       pass 
+    def loadPlaylist(self, command, user, data): 
+        self.sqlExecute(package(self._loadPlaylist, data))
+
+    def deletePlaylist(self, command, user, data):
+        pass
 
     # Blacklists the currently playing video so Naoko will ignore it
     def blacklist(self, command, user, data):
@@ -1722,8 +1725,7 @@ class Naoko(object):
                 except (TypeError, ValueError) as e:
                     self.logger.debug(e)
         if num > 5 or num < 1: return
-        self.sql_queue.append(package(self._lastBans, target, num))
-        self.sqlAction.set()
+        self.sqlExecute(package(self._lastBans, target, num))
 
     @hasPermission("ADD", False)
     def add(self, command, user, data, store=True, permission=True, wait=False):
@@ -1763,10 +1765,10 @@ class Naoko(object):
 
         if site and (site == "sc" or self._checkVideoId(site, vid)):
             if wait:
-                self.api_queue.append(package(self._add, site, vid, nick, store))
+                self.apiExecute(package(self._add, site, vid, nick, store))
             else:
                 self.api_queue.appendleft(package(self._add, site, vid, nick, store))
-            self.apiAction.set()
+                self.apiAction.set()
 
     # Add an individual video after verifying it
     def _add(self, site, vid, nick, store):
@@ -1783,8 +1785,7 @@ class Naoko(object):
             self.logger.debug("Adding video %s %s %s %s", title, site, vid, dur)
             self._addVideoToList(site, vid, url) 
             if store and not dur == 0:
-                self.sql_queue.append(package(self.insertVideo, site, vid, title, dur, nick))
-                self.sqlAction.set()
+                self.sqlExecute(package(self.insertVideo, site, vid, title, dur, nick))
         else:
             self.flagVideo(site, vid, 0b1)
             self.logger.debug("Invalid video %s %s %s, unable to add.", title, site, vid)
@@ -1908,8 +1909,7 @@ class Naoko(object):
         if time.time() - self.last_quote < 5: return
         self.last_quote = time.time()
         
-        self.sql_queue.append(package(self._quote, data))
-        self.sqlAction.set()
+        self.sqlExecute(package(self._quote, data))
     
     def _quote(self, name):
         row = self.dbclient.getQuote(name, [(self.name, "ST"), (self.irc_nick, "IRC"), (self.name, "CT")])
@@ -1978,8 +1978,7 @@ class Naoko(object):
         if not hasattr(self.cbclient, "cleverbot"): return
         text = data
         if text:
-            self.api_queue.append(package(self._cleverbot, text))
-            self.apiAction.set()
+            self.apiExecute(package(self._cleverbot, text))
 
     def _cleverbot(self, text):
         self.enqueueMsg(self.cbclient.cleverbot(text))
@@ -1997,8 +1996,7 @@ class Naoko(object):
         g = m.groups()
         src = g[3] or None
         dst = g[2] or g[4] or "en"
-        self.api_queue.append(package(self._translate, g[5], src, dst))
-        self.apiAction.set()
+        self.apiExecute(package(self._translate, g[5], src, dst))
 
     def _translate(self, text, src, dst):
         out = self.apiclient.translate(text, src, dst)
@@ -2012,8 +2010,7 @@ class Naoko(object):
     def wolfram(self, command, user, data):
         query = data
         if not query: return
-        self.api_queue.append(package(self._wolfram, query))
-        self.apiAction.set()
+        self.apiExecute(package(self._wolfram, query))
     
     def _wolfram(self, query):
         out = self.apiclient.wolfram(query)
@@ -2033,8 +2030,7 @@ class Naoko(object):
         if len(text) > 30:
             self.enqueueMsg("Message is too long.")
             return
-        self.api_queue.append(package(self._anagram, data))
-        self.apiAction.set()
+        self.apixecute(package(self._anagram, data))
     
     def _anagram(self, text):
         out = self.apiclient.anagram(text)
@@ -2178,8 +2174,7 @@ class Naoko(object):
         storeTime = time.time()
         if storeTime - self.userCountTime > USER_COUNT_THROTTLE:
             self.userCountTime = storeTime
-            self.sql_queue.append(package(self.insertUserCount, count, storeTime))
-            self.sqlAction.set()
+            self.sqlExecute(package(self.insertUserCount, count, storeTime))
    
     def checkSkip(self):
         if "num_votes" in self.room_info and self.room_info["num_votes"]["votes"] >= self.skipLevel:
@@ -2381,8 +2376,7 @@ class Naoko(object):
     # 1 << 0    : Invalid video, may become valid in the future. Reset upon successful manual add.
     # 1 << 1    : Manually blacklisted video.
     def flagVideo(self, site, vid, flags):
-        self.sql_queue.append(package(self._flagVideo, site, vid, flags))
-        self.sqlAction.set()
+        self.sqlExecute(package(self._flagVideo, site, vid, flags))
 
     # Wrapper
     def _flagVideo(self, *args, **kwargs):
@@ -2390,8 +2384,7 @@ class Naoko(object):
         
     # Remove flags from a video.
     def unflagVideo(self, site, vid, flags):
-        self.sql_queue.append(package(self._unflagVideo, site, vid, flags))
-        self.sqlAction.set()
+        self.sqlExecute(package(self._unflagVideo, site, vid, flags))
 
     # Wrapper
     def _unflagVideo(self, *args, **kwargs):
@@ -2496,8 +2489,7 @@ class Naoko(object):
         if sql:
             # Insert the video using the retrieved title and duration.
             # Trust the external APIs over the Synchtube playlist.
-            self.sql_queue.append(package(self.insertVideo, vi.type, v_id, title, dur, v.queueby))
-            self.sqlAction.set()
+            self.sqlExecute(package(self.insertVideo, vi.type, v_id, title, dur, v.queueby))
         else: 
             # Flag it as valid even if we don't add it
             self.unflagVideo(vi.type, v_id, 1)
@@ -2541,12 +2533,16 @@ class Naoko(object):
             if site == 'sc':
                 vid = self.apiclient.resolveSoundcloud(v_id)
             cleanVids.append((site, vid)) 
-        self.sql_queue.append(package(self._savePlaylist, name, cleanVids, nick))
-        self.sqlAction.set()
+        self.sqlExecute(package(self._savePlaylist, name, cleanVids, nick))
     
     def _savePlaylist(self, name, vids, nick):
         self.logger.debug("Storing playlist %s, length %d, by %s" % (name, len(vids), nick))
         self.dbclient.insertPlaylist(name, vids, nick)
+    
+    def _savePlaylist(self, name, vids, nick):
+        pass
+        #self.logger.debug("Loading playlist %s, length %d, by %s" % (name, len(vids), nick))
+        #iself.dbclient.insertPlaylist(name, vids, nick)
 
     def _addRandom(self, num, duration, title, user):
         self.logger.debug("Adding %d randomly selected videos, with title like %s, and duration no more than %s seconds, posted by user %s", num, title, duration, user)
@@ -2579,8 +2575,7 @@ class Naoko(object):
 
         self.send("queue", packet)
 
-        self.api_queue.append(package(self._checkAddedVideo, site, vid))
-        self.apiAction.set()
+        self.apiExecute(package(self._checkAddedVideo, site, vid))
         
     def _checkAddedVideo(self, site, vid):
         data = self.apiclient.getVideoInfo(site, vid)
@@ -2643,9 +2638,7 @@ class Naoko(object):
         self.vidlist.insert(idx, vid)
         self.vidLock.release()
 
-        self.api_queue.append(package(self._validateAddVideo, vid, sql, idx))
-        self.apiAction.set()
-
+        self.apiExecute(package(self._validateAddVideo, vid, sql, idx))
         
     def _removeVideo(self, uid):
         if self.stthread != threading.currentThread():
@@ -2694,8 +2687,7 @@ class Naoko(object):
         if sendMessage:
             self.enqueueMsg("Banned %s: (%s)" % (self.userlist[sid].nick, reason))
         self.send("ban", sid)
-        self.sql_queue.append(package(self.dbclient.insertBan, self.userlist[sid], reason, time.time(), modName))
-        self.sqlAction.set()
+        self.sqlExecute(package(self.dbclient.insertBan, self.userlist[sid], reason, time.time(), modName))
 
     # Perform pending pending leader actions.
     # This should _NOT_ be called outside the main SynchtubeClient's thread
