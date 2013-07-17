@@ -502,7 +502,7 @@ class NaokoDB(object):
         self.commit()
     
     # Higher level video/poll/chat-related APIs
-    def getPlaylist(self, name, blockedFlags=0b11, blockedSites = []):
+    def getPlaylist(self, name, columns, blockedFlags=0b11, blockedSites = []):
         """
         Retrieves an ordered playlist.
 
@@ -520,11 +520,33 @@ class NaokoDB(object):
             WHERE vs.type = v.type AND vs.id = v.id
             [ORDER BY <orderby>] [LIMIT ?]
         """
+        
+        _tables = {'videos'      : set(['type', 'id', 'duration_ms', 'title'])}
+        legal_cols = set.union(_tables['videos'])
+        if not columns:
+            columns = legal_cols
+
+        if not set(columns) <= legal_cols:
+            raise ProgrammingError("Argument columns: %s not a subset of video "
+                                    "columns %s" % (columns, _tables['videos']))
+
+        # Canonicalize references to columns
+        col_repl = {'id'   : 'v.id',
+                    'type' : 'v.type'}
+
+        sel_cols = []
+        for col in columns:
+            sel_col = col
+            if col in col_repl:
+                sel_col = col_repl[col]
+            sel_cols.append(sel_col)
+
+        sel_list  = ', '.join(sel_cols)
 
         binds = (name,)
-        sel_cls = "SELECT type, id FROM playlists p INNER JOIN videos v ON p.id = v.id AND p.type = v.type "
+        sel_cls = "SELECT " + sel_list + " FROM playlists p INNER JOIN videos v ON p.id = v.id AND p.type = v.type "
         where_cls = " WHERE p.name = ? "
-        order_cls = " ORDER BY p.idx DESC"
+        order_cls = " ORDER BY p.idx ASC"
        
         if isinstance(blockedFlags, (int, long)):
             where_cls += " AND v.flags & ? = 0 "

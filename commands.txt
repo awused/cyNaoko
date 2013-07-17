@@ -150,6 +150,10 @@ delete [name | -unnamed | -all] [-title "TITLE"] [ -dur (hours: | hours:minutes 
     Providing -unnamed will match all videos added by unregistered users.
     Providing -all will match videos added by any user, this is implicit when a title or duration is provided but can be overridden.
 
+deleteplaylist name
+    Hybrid mod permission +Y.
+    Deletes the named playlist.
+
 duplicates
     Hybrid mod permission +T.
     Deletes duplicate videos from the playlist. Will not remove the currently playing video even if it is a duplicate.
@@ -178,6 +182,10 @@ kick (name [reason]) | -unnamed | -unregistered
     Hybrid mod permission +O.
     Can be used by the current leader of the room regardless of permissions.
     Changes the leader to Naoko.
+
+loadplaylist name
+    Hybrid mod permission +A.
+    Load the named playlist at the end of the current room playlist.
 
 lock
 unlock
@@ -219,6 +227,10 @@ restart
     Hybrid mod permission +R.
     Restarts Naoko.
 
+saveplaylist name
+    Hybrid mod permission +Y.
+    Saves the current playlist with the given name. Overwrites any playlist with the same name.
+
 * setskip on | off | number | percentage
     Hybrid mod permission +E.
     Sets the status for voting depending on what is provided. If told to turn on skipping, she will use the previous setting if she has one, otherwise she will default to 33%.
@@ -249,7 +261,7 @@ A list of all the permissions that can be given to hybrid mods, and the affected
 See the above documentation for any particular details for how the commands are affected.
 Some are unintuitive to prevent being accidentally given out.
 
-A - Addrandom
+A - Addrandom, Loadplaylist
 B - Bump
 C - Clean
 D - Delete
@@ -270,6 +282,7 @@ S - Skip
 T - Duplicates
 U - Autolead
 V - Autosetskip
+Y - Saveplaylist, Deleteplaylist
 
 --- Naoko Administrator Only ---
 These functions are only available to the administrator of Naoko through telnet.

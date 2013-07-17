@@ -127,7 +127,7 @@ class Naoko(object):
         "CLEAN"         : ((1 << 6), 'C'),  # C - The clean command.
         "SKIP"          : ((1 << 7), 'S'),  # S - Skipping videos.
         "LOCK"          : ((1 << 8), 'L'),  # L - Lock and unlock the playlist.
-        "RANDOM"        : ((1 << 9), 'A'),  # A - Addrandom with more than 5 videos.
+        "RANDOM"        : ((1 << 9), 'A'),  # A - Addrandom with more than 5 videos or load a playlist.
         "SETSKIP"       : ((1 << 11), 'E'), # E - Setskip.
         "DUPLICATES"    : ((1 << 12), 'T'), # T - Remove duplicate videos.
         "MUTE"          : ((1 << 13), 'M'), # M - Mute or unmute Naoko.
@@ -681,8 +681,6 @@ class Naoko(object):
                         #accouncement
                         #voteskip (count, need)
                         #kick
-                        # rank
-                        #channelOpts
                         #banlist
                         #drinkCount - probably ignore
                         # poll information probably doesn't need to be tracked unless I need to track whether a poll is open
@@ -728,6 +726,7 @@ class Naoko(object):
                                 "blacklist"         : self.blacklist,
                                 "quote"             : self.quote,
                                 "saveplaylist"      : self.savePlaylist,
+                                "deleteplaylist"    : self.deletePlaylist,
                                 # Functions that query an external API
                                 "cleverbot"         : self.cleverbot,
                                 "translate"         : self.translate,
@@ -1698,11 +1697,13 @@ class Naoko(object):
         self.apiExecute(package(self._fixPlaylist, name, [(v.vidinfo.type, v.vidinfo.id) for v in self.vidlist], user.name))
 
     # TODO -- similar permissions similar to addrandom
+    @hasPermission("RANDOM")
     def loadPlaylist(self, command, user, data): 
         self.sqlExecute(package(self._loadPlaylist, data))
 
+    @hasPermission("PLAYLISTS")
     def deletePlaylist(self, command, user, data):
-        pass
+        self.sqlExecute(package(self._deletePlaylist, data))
 
     # Blacklists the currently playing video so Naoko will ignore it
     def blacklist(self, command, user, data):
@@ -2030,7 +2031,7 @@ class Naoko(object):
         if len(text) > 30:
             self.enqueueMsg("Message is too long.")
             return
-        self.apixecute(package(self._anagram, data))
+        self.apiExecute(package(self._anagram, data))
     
     def _anagram(self, text):
         out = self.apiclient.anagram(text)
@@ -2494,7 +2495,6 @@ class Naoko(object):
             # Flag it as valid even if we don't add it
             self.unflagVideo(vi.type, v_id, 1)
 
-
     def _fixVideoID(self, vi):
         v_id = vi.id
         if vi.type == "sc":
@@ -2538,18 +2538,21 @@ class Naoko(object):
     def _savePlaylist(self, name, vids, nick):
         self.logger.debug("Storing playlist %s, length %d, by %s" % (name, len(vids), nick))
         self.dbclient.insertPlaylist(name, vids, nick)
-    
-    def _savePlaylist(self, name, vids, nick):
-        pass
-        #self.logger.debug("Loading playlist %s, length %d, by %s" % (name, len(vids), nick))
-        #iself.dbclient.insertPlaylist(name, vids, nick)
+
+    def _deletePlaylist(self, name):
+        #self.logger.debug("Storing playlist %s, length %d, by %s" % (name, len(vids), nick))
+        self.dbclient.deletePlaylist(name)
+ 
+    def _loadPlaylist(self, name):
+        self.logger.debug("Retrieving playlist %s", name)
+        vids = self.dbclient.getPlaylist(name, ['type', 'id'], blockedSites=["bt"])
+        self.logger.debug("Retrieved %s", vids)
+        self._addVideosToList(vids)
 
     def _addRandom(self, num, duration, title, user):
         self.logger.debug("Adding %d randomly selected videos, with title like %s, and duration no more than %s seconds, posted by user %s", num, title, duration, user)
-        startTime = time.time()
         vids = self.dbclient.getVideos(num, ['type', 'id'], ('RANDOM()',), duration, title, user, blockedSites=["bt", "sc"]) # Cytube doesn't support Blip.tv, and no one likes Soundcloud anyway
         # TODO -- Make blockedSites something the user can specify
-        self.logger.debug("Took %f seconds", time.time() - startTime)
         self.logger.debug("Retrieved %s", vids)
         self._addVideosToList(vids)
         #self.stExecute(package(self.asLeader, package(self._addVideosToList, list(vids))))
