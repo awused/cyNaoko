@@ -1006,9 +1006,7 @@ class Naoko(object):
 
     def mediaUpdate(self, tag, data):
         if self.state.state == self._STATE_UNKNOWN and tag == "changeMedia":
-            self.state.current = self.getVideoIndexById(self.state.Id)
             self.state.dur = data["seconds"]
-
         
         time = data["currentTime"]
         if tag == "changeMedia":
@@ -2680,6 +2678,8 @@ class Naoko(object):
         self.vidLock.acquire()
         self.vidlist.insert(idx, vid)
         self.vidLock.release()
+        if self.state.current == -1 and vid.uid == self.state.Id:
+            self.state.current = idx
 
         self.apiExecute(package(self._validateAddVideo, vid, sql, idx))
         
