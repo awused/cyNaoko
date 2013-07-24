@@ -5,3 +5,4 @@
 *.lst
 cbclient.py
 persistentsettings
+iourlcache

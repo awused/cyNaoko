@@ -231,6 +231,7 @@ class Naoko(object):
         # All the information related to playback state
         self.state = Object()
         self.state.state = self._STATE_UNKNOWN
+        self.state.Id = -1
         self.state.current = None
         self.state.time = 0
         self.state.pauseTime = -1.0
@@ -239,18 +240,26 @@ class Naoko(object):
         # Tracks when she needs to update her playback status
         # This is used to interrupt her timer as she is waiting for the end of a video
         self.playerAction = threading.Event()
-
-        self.logger.info("Retrieving IO_URL")
-        io_url = urlopen("http://%s/r/assets/js/iourl.js" % (self.domain)).read()
-        # Unless someone has changed their iourl.js a lot this is going to work
-        io_url = io_url[io_url.rfind("var IO_URL"):].split('"')[1]
-        # Assume HTTP because Naoko can't handle other protocols anywa
-        socket_ip, socket_port = io_url[7:].split(':')
         
         self.userlist = {}
+
+        io_url = self._readIOUrl()
+        if not io_url:
+            self.logger.info("Retrieving IO_URL")
+            io_url = urlopen("http://%s/r/assets/js/iourl.js" % (self.domain)).read()
+            # Unless someone has changed their iourl.js a lot this is going to work
+            io_url = io_url[io_url.rfind("var IO_URL"):].split('"')[1]
+        else:
+            self._writeIOUrl("")
+
+        # Assume HTTP because Naoko can't handle other protocols anyway
+        socket_ip, socket_port = io_url[7:].split(':')
+        
         self.logger.info("Starting SocketIO Client")
         self.client = SocketIOClient(socket_ip, int(socket_port), "socket.io", {"t": int(round(time.time() * 1000))})
         
+        self._writeIOUrl(io_url)
+
         # Various queues and events used to sychronize actions in separate threads
         # Some are initialized with maxlen = 0 so they will silently discard actions meant for non-existent threads
         self.st_queue = deque()
@@ -618,6 +627,21 @@ class Naoko(object):
         finally:
             if f:
                 f.close()
+    
+    # Read the IO_URL cache
+    def _readIOUrl(self):
+        self.logger.debug("Reading io_url.")
+        f = None
+        try:
+            f = open("iourlcache", "rb")
+            return f.readline().strip()
+        except Exception as e:
+            self.logger.debug("Reading cached io_url failed.")
+            self.logger.debug(e)
+            return False
+        finally:
+            if f:
+                f.close()
 
     def _initHandlers(self):
         """self.handlers = {"<"                : self.chat,
@@ -949,12 +973,13 @@ class Naoko(object):
     def currentVideo(self, tag, data):
         old = self.state.current
         self.state.current = self.getVideoIndexById(data)
+        self.state.Id = data
         # Case where the playlist is empty
         if self.state.current == -1 or not self.vidlist:
             self.state.current = -1
             self.state.state = self._STATE_UNKNOWN
             return
-        
+       
         # TODO -- Remove this quick fix
         if self.state.dur - self.state.time <= 6.0:
             # This should make false positives as rare as possible
@@ -981,6 +1006,7 @@ class Naoko(object):
 
     def mediaUpdate(self, tag, data):
         if self.state.state == self._STATE_UNKNOWN and tag == "changeMedia":
+            self.state.current = self.getVideoIndexById(self.state.Id)
             self.state.dur = data["seconds"]
 
         
@@ -2023,7 +2049,7 @@ class Naoko(object):
     
     # Queries the anagram bot with the provided string.
     def anagram(self, command, user, data):
-        text = "".join(data.split())
+        text = re.sub(r"[^a-zA-Z]", "", data)
         if not text: return
         if len(text) < 7:
             self.enqueueMsg("Message is too short.")
@@ -2355,6 +2381,20 @@ class Naoko(object):
                     f.write("%s %d\n" % (h, v))              
         except Exception as e:
             self.logger.debug("Failed to write hybrid mods to file.")
+            self.logger.debug(e)
+        finally:
+            if f:
+                f.close()
+    
+    # Write the current status of the hybrid mods and a short warning about editing the resulting file.
+    def _writeIOUrl(self, io_url):
+        f = None
+        self.logger.debug("Writing io_url to file.")
+        try:
+            f = open("iourlcache", "wb")
+            f.write(io_url + "\n")
+        except Exception as e:
+            self.logger.debug("Failed to write io_url.")
             self.logger.debug(e)
         finally:
             if f:

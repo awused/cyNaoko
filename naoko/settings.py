@@ -4,7 +4,7 @@
 import logging
 
 # Default timeout for both the monitoring process and the heartbeat thread
-TIMEOUT = 30
+TIMEOUT = 35
 
 # The logging level, choose between logging.DEBUG, logging.INFO, logging.WARNING, and logging.ERROR.
 # It is recommended to use a setting of WARNING or lower.
