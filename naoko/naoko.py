@@ -1051,6 +1051,8 @@ class Naoko(object):
 
     def removeMedia(self, tag, data):
         self._removeVideo(data["uid"])
+        if len(self.vidlist) == 0:
+            self.nextVideo()
 
     def deleteMedia(self, uid):
         self.send("delete", uid)
@@ -1068,6 +1070,8 @@ class Naoko(object):
             # Don't add the entire playlist to the database
             # It's also unsafe to delete any videos detected as invalid
             self._addVideo(v, i, False)
+        if len(self.vidlist) == 0:
+            self.nextVideo()
 
     def clear(self, tag, data):
         self.vidLock.acquire()
@@ -1104,7 +1108,6 @@ class Naoko(object):
                 self.state.time = int(round(time.time() * 1000))
         self.playerAction.set()
 
-    # TODO -- maintain checking videos on playback, even ones added by Naoko
     def play(self, tag, data):
         self._play()    
     
@@ -1689,7 +1692,7 @@ class Naoko(object):
     @hasPermission("RANDOM", False)
     def addRandom(self, command, user, data, permission=True):
         # Limit to once every 5 seconds
-        if time.time() - self.last_random < 5: return
+        if user != self.selfUser and time.time() - self.last_random < 5: return
         self.last_random = time.time()
         
         if not (permission or len(self.vidlist) <= 10): return
@@ -2576,6 +2579,7 @@ class Naoko(object):
     def _savePlaylist(self, name, vids, nick):
         self.logger.debug("Storing playlist %s, length %d, by %s" % (name, len(vids), nick))
         self.dbclient.insertPlaylist(name, vids, nick)
+        self.enqueueMsg("Playlist saved.")
 
     def _deletePlaylist(self, name):
         #self.logger.debug("Storing playlist %s, length %d, by %s" % (name, len(vids), nick))
