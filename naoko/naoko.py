@@ -237,6 +237,8 @@ class Naoko(object):
         self.state.pauseTime = -1.0
         self.state.dur = 0
         self.state.reason = None
+        self.skipOverride = False # Overrides the state when determining whether a video should be deleted
+
         # Tracks when she needs to update her playback status
         # This is used to interrupt her timer as she is waiting for the end of a video
         self.playerAction = threading.Event()
@@ -855,6 +857,7 @@ class Naoko(object):
                 self.stExecute(package(self.addRandom, "addrandom 1", self.selfUser, ""))
         else:
             self.state.state = self._STATE_NORMAL_SKIP
+            self.skipOverride = True
             self.send("playNext")
 
         """self.vidLock.acquire()
@@ -998,9 +1001,10 @@ class Naoko(object):
 
         if self.managing and (old or old == 0): # Starting a new video
             # playlistIdx doesn't get sent when videos are moved or deleted but check the player state anyway.
-            if (self.state.state == self._STATE_NORMAL_SWITCH or self.state.state == self._STATE_NORMAL_SKIP) and old != -1 and self.state.current != old and not self.vidlist[old].temp:
+            if (self.state.state == self._STATE_NORMAL_SWITCH or self.state.state == self._STATE_NORMAL_SKIP or self.skipOverride) and old != -1 and self.state.current != old and not self.vidlist[old].temp:
                 self.deleteMedia(self.vidlist[old].uid)
                 self.state.state = self._STATE_UNKNOWN
+                self.skipOverride = False
 
 
     def playlistMeta(self, tag, data):
