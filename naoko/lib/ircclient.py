@@ -29,6 +29,7 @@ class IRCClient(object):
         time.sleep(2)
         self.send("USER "+ self.nick +" "+ self.nick +" "+ self.nick +" :"+ self.nick +"\n") # user authentication
         self.send("NICK "+ self.nick +"\n") # here we actually assign the nick to the bot
+        time.sleep(1)
         if pw:
             self.send("PRIVMSG nickserv :id " + pw + "\n")
         self.send("JOIN " + self.channel + "\n")
