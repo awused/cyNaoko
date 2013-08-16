@@ -516,6 +516,7 @@ class Naoko(object):
             self.logger.info("Chat Loop Closed")
 
     # Responsible for handling playback
+    """
     def _playloop(self):
         while self.leading.wait():
             if self.closing.isSet(): break
@@ -556,6 +557,7 @@ class Naoko(object):
                 self.nextVideo()
             self.playerAction.clear()
         self.logger.info("Playback Loop Closed")
+    """
 
     def _sqlloop(self):
         self.db_logger = logging.getLogger("stclient.db")
@@ -652,33 +654,12 @@ class Naoko(object):
                 f.close()
 
     def _initHandlers(self):
-        """self.handlers = {"<"                : self.chat,
-                         "leader"           : self.leader,
-                         "users"            : self.users,
-                         "recording?"       : self.roomSetting,
-                         "tv?"              : self.roomSetting,
-                         "skip?"            : self.roomSetting,
-                         "lock?"            : self.roomSetting,
-                         "public?"          : self.roomSetting,
+        """              "leader"           : self.leader,
                          "history"          : self.roomSetting,
                          "vote_settings"    : self.roomSetting,
                          "playlist_rules"   : self.roomSetting,
                          "num_votes"        : self.roomSetting,
                          "self"             : self.selfInfo,
-                         "add_user"         : self.addUser,
-                         "remove_user"      : self.remUser,
-                         "nick"             : self.nick,
-                         "pm"               : self.play,
-                         "am"               : self.addMedia,
-                         "cm"               : self.changeMedia,
-                         "rm"               : self.removeMedia,
-                         "mm"               : self.moveMedia,
-                         "s"                : self.changeState,
-                         "playlist"         : self.playlist,
-                         "shuffle"          : self.shuffle,
-                         "initdone"         : self.initDone,
-                         "clear"            : self.clear,
-                         "banlist"          : self.banlist,
                          "kick"             : self.kicked}"""
         self.handlers = {"chatMsg"          : self.chat,
                         "channelOpts"       : self.channelOpts,
@@ -806,7 +787,8 @@ class Naoko(object):
     def chatCommand(self, user, msg, irc=False):
         if not msg or msg[0] != '$': return
        
-        """if self.commandLock == "Mods" and not user.mod:
+        """
+        if self.commandLock == "Mods" and not user.mod:
             return
         elif self.commandLock == "Registered" and not user.uid:
             return
@@ -860,29 +842,6 @@ class Naoko(object):
             self.skipOverride = True
             self.send("playNext")
 
-        """self.vidLock.acquire()
-        try:
-            videoIndex = self.getVideoIndexById(self.state.current)
-            if videoIndex == None:
-                videoIndex = -1
-            if not self.vidlist or (len(self.vidlist) == 1 and videoIndex >= 0):
-                self.logger.debug("Empty list, playing default video.")
-                # Hardcoded video.
-                self.send("cm", ["yt", "qnc-YUfXanw", u"Bad touhou doujin plot" ,"http://i.ytimg.com/vi/qnc-YUfXanw/default.jpg", 44])
-                self.sql_queue.append(package(self.addRandom, "addrandom", self.selfUser, ""))
-                self.sqlAction.set()
-            else: 
-                videoIndex = (videoIndex + 1) % len(self.vidlist)
-                self.logger.debug("Advancing to next video [%s]", self.vidlist[videoIndex])
-                self.send("s", [2])
-                self.send("pm", self.vidlist[videoIndex].v_sid)
-                self.enqueueMsg("Playing: %s" % (self.filterString(self.vidlist[videoIndex].vidinfo.title)[1]))
-           
-            self.state.time = int(round(time.time() * 1000))
-        
-        finally:
-            self.vidLock.release()"""
-
     def disableIRC(self, reason):
         self.irc_logger.warning(reason)
         self.sendChat(reason)
@@ -913,15 +872,6 @@ class Naoko(object):
         if self.irc_nick and self.ircclient:
             self.ircclient.close()
 
-    # Bans a user for changing to an invalid name
-    def nameBan(self, sid):
-        if self.pending.has_key(sid): return
-        self.pending[sid] = True
-        user = self.userlist[sid]
-        self.logger.info("Attempted ban of %s for invalid characters in name", user.nick)
-        reason = "Name [%s] contains illegal characters" % user.nick
-        self.asLeader(package(self._banUser, sid, reason))
-    
     def sendChat(self, msg):
         #self.logger.debug(repr(msg))
         self.send("chatMsg", {"msg": msg})
@@ -935,15 +885,6 @@ class Naoko(object):
         except UnicodeDecodeError:
             buf = json.dumps(buf, encoding="iso-8859-15")
         self.client.send(5, data=buf)
-
-    def _turnOnTV(self):
-        # Short sleep to give Synchtube some time to react
-        time.sleep(0.05)
-        self.tossing = True
-        self.pendingToss = False
-        self.notGivingBack = False
-        self.unToss = package(self.send, "turnoff_tv")
-        self.send("turnon_tv")
 
     def checkVideo(self, site, vid): 
         # appendleft so it doesn't wait for the entire playlist to be checked
@@ -959,6 +900,8 @@ class Naoko(object):
 
     # Kicks a user for something they did in chat
     # Tracks kicks by username for a three strikes policy
+    # REIMPLEMENT
+    """
     def chatKick(self, user, reason):
         if self.pending.has_key(user.name):
             return
@@ -975,8 +918,9 @@ class Naoko(object):
                 self.asLeader(package(self._banUser, user.sid, reason))
             else:
                 self.asLeader(package(self._kickUser, user.sid, reason))
+        """
 
-    # Handlers for Synchtube message types
+    # Handlers for Cytube message types
     # All of them receive input in the form (tag, data)
 
     def currentVideo(self, tag, data):
@@ -1088,115 +1032,9 @@ class Naoko(object):
         self.vidlist = []
         self.vidLock.release()
         
-    def shuffle(self, tag, data):
-        self._shuffle(data)
-        if self.shuffleBump:
-            self._bump((self.shuffleBump, ))
-            self.shuffleBump = False
-            if self.deferredToss & self.DEFERRED_MASKS["SHUFFLE"]:
-                self.deferredToss &= ~self.DEFERRED_MASKS["SHUFFLE"]
-                if not self.deferredToss:
-                    self.tossLeader()
-
-    def changeState(self, tag, data):
-        self.logger.debug("State is %s %s", tag, data)
-        if data == None:
-            # Just assume whatever is loaded is playing correctly.
-            if tag == "cm":
-                self.state.state = 1
-            else:
-                self.state.state = 0
-            self.state.time = int(round(time.time() * 1000))
-        else:
-            self.state.state = data[0]
-            if self.state.state == 2:
-                self.state.pauseTime = time.time()
-                self.logger.debug("Paused %.3f seconds from the beginning of the video." % (self.state.pauseTime - (self.state.time/1000)))
-            elif len(data) > 1:
-                self.state.time = data[1]
-            else:
-                self.state.time = int(round(time.time() * 1000))
-        self.playerAction.set()
-
-    def play(self, tag, data):
-        self._play()    
-    
-        self.state.current = data[1]
-        self.state.reason = None
-        index = self.getVideoIndexById(self.state.current)
-        if index == None:
-            self.sendChat("Unexpected video, restarting.")
-            self.close()
-            return
-        self.state.dur = self.vidlist[index].vidinfo.dur
-        self.checkVideo(self.vidlist[index].vidinfo)
-        self.changeState(tag, data[2])
-        self.logger.debug("Playing %s %s", tag, data)
-
-    def changeMedia(self, tag, data):
-        self._play()
-
-        self.logger.info("Change media: %s" % (data))
-        self.state.current = data[0]
-        self.state.reason = None
-        # Prevent her from skipping something she does not recognize, like a livestream.
-        # HOWEVER, this will require a mod to tell her to skip before DEFAULT_WAIT seconds.
-        self.state.dur = DEFAULT_WAIT
-        v = data[1]
-        if len(v) < len(SynchtubeVidInfo._fields):
-            v.extend([None] * (len(SynchtubeVidInfo._fields) - len(v))) # If an unregistered adds a video there is no name included
-        v = v[:len(SynchtubeVidInfo._fields)]
-        v[2] = self.filterString(v[2])[1]
-        vi = SynchtubeVidInfo(*v)
-        # Have to assume it's a valid video if it's not from one of these sites.
-        if vi.site in ["yt", "bt", "dm", "vm", "sc"]:
-            self.checkVideo(vi)
-        self.changeState(tag, data[2])
-
-    # Actions required when a video starts playing with Naoko as the leader.
-    def _play(self):
-        if self.leading.isSet() or self.deferredToss & self.DEFERRED_MASKS["SKIP"]:
-            if (not self.state.current == None) and (not self.getVideoIndexById(self.state.current) == None): 
-                self.send("rm", self.state.current)
-            self.send("s", [1,0])
-            if self.deferredToss & self.DEFERRED_MASKS["SKIP"]:
-                self.deferredToss &= ~self.DEFERRED_MASKS["SKIP"]
-                if not self.deferredToss:
-                    self.tossLeader()
-        
     def ignore(self, tag, data):
         self.logger.debug("Ignoring %s", tag)
         #self.logger.debug("Ignoring %s, %s", tag, data)
-
-    def nick(self, tag, data):
-        sid = data[0]
-        valid, nick = self.filterString(data[1], True)
-        oldnick = self.userlist[sid].nick
-        self.logger.debug("%s nick: %s (was: %s)", sid, nick, oldnick)
-        self.userlist[sid]= self.userlist[sid]._replace(nick=nick)
-        if not valid:
-            self.nameBan(sid)
-            return
-
-        user = self.userlist[sid]
-        if sid == self.sid:
-            self.selfUser = user
-
-        if user.mod or user.sid == self.sid: return
-       
-        if user.nickChanges > 5 or (user.nickChanges > 0 and not nick == oldnick):
-            if self.pending.has_key(sid):
-                return
-            else:
-                # Only a script/bot can change nicks to different nicks multiple times.
-                # It is possible for it to glitch and a user can change to the same nick several times.
-                # In order to reduce false positives while still catching nick flood attempts a threshhold of 5 was chosen.
-                self.pending[sid] = True
-                self.logger.info("Attempted ban of %s for %d nick changes", (user.nick, user.nickChanges))
-                reason = "%s changed names %d times" % (user.nick, user.nickChanges)
-                self.asLeader(package(self._banUser, sid, reason))
-        else:
-            self.userlist[sid] = user._replace(nickChanges=user.nickChanges+1)
 
     def login(self, tag, data):
         if not data["success"] or "error" in data:
@@ -1209,7 +1047,6 @@ class Naoko(object):
         self.room_info["locked"] = data["locked"]
 
     def addUser(self, tag, data, isSelf=False):
-        data["name"] == self.name
         self._addUser(data, data["name"] == self.name)
   
     # Stores the number of viewers, not just the number of named users
@@ -1228,27 +1065,8 @@ class Naoko(object):
         for u in data:
             self._addUser(u)
 
-    def selfInfo(self, tag, data):
-        self.addUser(tag, data, isSelf=True)
-        self.sid = data[0]
-        if not self.pw:
-            self.send("nick", self.name)
-        if self.wasKicked:
-            self.takeLeader()
-
-    def roomSetting(self, tag, data):
-        self.room_info[tag] = data
-        if tag == "tv?" and self.room_info["tv?"]:
-            if self.leader_sid == self.sid:
-                self.wasKicked = False
-            self.tossing = False
-            self.leader_sid = None
-            self.leading.clear()
-        if tag == "skip?" or tag == "vote_settings":
-            self.updateSkipLevel()
-        if tag == "num_votes":
-            self.checkSkip()
-
+    # REIMPLEMENT
+    """
     def banlist(self, tag, data):
         if not self.unbanTarget:
             # If there is no pending unban simply display the list.
@@ -1277,11 +1095,15 @@ class Naoko(object):
                 self.deferredToss &= ~self.DEFERRED_MASKS["UNBAN"]
                 if not self.deferredToss:
                     self.tossLeader()
-    
+    """
+
+    # REIMPLEMENT
+    """
     def kicked(self, tag, data):
         if self.doneInit:
             self.beingKicked = True
         self.close()
+    """
 
     def chat(self, tag, data):
         # Best to just ignore every chat message until initialization is done
@@ -1305,7 +1127,9 @@ class Naoko(object):
 
         if user.rank >= 2 or user.name == self.name: return
 
-        """user.msgs.append(time.time())
+        # REIMPLEMENT
+        """
+        user.msgs.append(time.time())
         span = user.msgs[-1] - user.msgs[0]
         if span < self.spam_interval * user.msgs.maxlen and len(user.msgs) == user.msgs.maxlen:
             self.logger.info("Attempted kick/ban of %s for spam", user.name)
@@ -1318,8 +1142,11 @@ class Naoko(object):
             if m and not m.groups()[1]:
                 self.logger.info("Attempted kick/ban of %s for blacklisted phrase", user.nick)
                 reason = "%s sent a blacklisted message" % (user.name)
-                self.chatKick(user, reason)"""
-    
+                self.chatKick(user, reason)
+        """
+
+    # REIMPLEMENT 
+    """
     def leader(self, tag, data):
         self.logger.debug("Leader is %s", self.userlist[data])
         self.leader_sid = data
@@ -1331,6 +1158,7 @@ class Naoko(object):
                 self.leading.set()
         else:
             self.leading.clear()
+    """
 
     # Serves as a decent enough indicator of initialization being done
     def channelOpts(self, tag, data):
@@ -1341,24 +1169,6 @@ class Naoko(object):
                 self.stExecute(package(self.addRandom, "addrandom", self.selfUser, ""))
             self.doneInit = True
 
-    
-    # Automatically set the skip mode and take leader if applicable.
-    # Setskip("none") will simply fail silently, so it is safe to call.
-    def initDone(self, tag, data):
-        self.storeUserCount()
-        self.updateSkipLevel()
-        self.doneInit = True
-        self.client.doneInit = True
-
-        if self.autoLead:
-            self.asLeader(package(self.setSkip, "",  self.selfUser, self.autoSkip), False)
-        else:
-            if self.leader_queue:
-                def fn():
-                    return
-                self.asLeader(fn)
-            self.setSkip("", self.selfUser, self.autoSkip)
-        
     # Command handlers for commands that users can type in Synchtube chat
     # All of them receive input in the form (command, user, data)
     # Where command is the typed command, user is the user who sent the message
@@ -1374,6 +1184,8 @@ class Naoko(object):
         self.nextVideo()
     
     # Set the skipping mode. Takes either on, off, x, or x%.
+    # REIMPLEMENT
+    """
     def setSkip(self, command, user, data):
         if not (user.mod or self.hasPermission(user, "SETSKIP")): return
         m = re.match("^((on)|(off)|([1-9][0-9]*)(%)?)( .*)?$", data, re.IGNORECASE)
@@ -1400,7 +1212,10 @@ class Naoko(object):
     def _setSkip(self, settings):
         self.send("skip?", True)
         self.send("vote_settings", settings)
+    """
 
+    # REIMPLEMENT
+    """
     def autoSetSkip(self, command, user, data):
         if not (user.mod or self.hasPermission(user, "AUTOSKIP")): return
         m = re.match("^((none)|(on)|(off)|([1-9][0-9]*)(%)?)( .*)?$", data, re.IGNORECASE)
@@ -1410,7 +1225,10 @@ class Naoko(object):
             self._writePersistentSettings()
         else:
             self.enqueueMsg("Invalid skip setting.")
+    """
 
+    # REIMPLEMENT
+    """
     def autoLeader(self, command, user, data):
         if not (user.mod or self.hasPermission(user, "AUTOLEAD")): return
         d = data.lower()
@@ -1422,7 +1240,10 @@ class Naoko(object):
             self.enqueueMsg("Automatic leading is disabled.")
         else: return    
         self._writePersistentSettings()
-
+    """
+ 
+    # REIMPLEMENT
+    """
     def setUnregSpamBan(self, command, user, data):
         if not (user.mod or self.hasPermission(user, "UNREGSPAMBAN")): return
         d = data.lower()
@@ -1434,6 +1255,7 @@ class Naoko(object):
             self.enqueueMsg("Unregistered spammers will have three chances.")
         else: return
         self._writePersistentSettings()
+    """
 
     @hasPermission("MANAGE")
     def setPlaylistManagement(self, command, user, data):
@@ -1448,6 +1270,8 @@ class Naoko(object):
         self._writePersistentSettings()
 
     # Note: Should use numeric ranks in addition to admin = 3+, mods = 2+, users 1+ (what exactly is 0?)
+    # REIMPLEMENT
+    """
     def setCommandLock(self, command, user, data):
         if not user.mod: return
         d = data.lower()
@@ -1465,11 +1289,15 @@ class Naoko(object):
             self.enqueueMsg("Unregistered users can use commands.")
         else: return
         self._writePersistentSettings()
+    """
     
+    # REIMPLEMENT
+    """
     def shuffleList(self, command, user, data):
         if not (user.mod or self.hasPermission(user, "SHUFFLE")): return
         self.shuffleBump = self.state.current
-        self.asLeader(package(self.send, "shuffle"), deferred=self.DEFERRED_MASKS["SHUFFLE"]) 
+        self.asLeader(package(self.send, "shuffle"), deferred=self.DEFERRED_MASKS["SHUFFLE"])
+    """
 
     def help(self, command, user, data):
         self.enqueueMsg("I only do this out of pity. https://raw.github.com/Suwako/cyNaoko/master/commands.txt")
@@ -1501,6 +1329,8 @@ class Naoko(object):
     def unmute(self, command, user, data):
         self.muted = False
 
+    # REIMPLEMENT
+    """
     def steal(self, command, user, data):
         if not (user.mod or self.hasPermission(user, "LEAD")): return
         self.changeLeader(user.sid)
@@ -1516,6 +1346,7 @@ class Naoko(object):
         self.logger.info("Requested mod change to %s by %s", target, user)
         if not target: return
         self.changeLeader(target.sid)
+    """
 
     def dice(self, command, user, data):
         if not data: return
@@ -1752,6 +1583,8 @@ class Naoko(object):
         self.flagVideo(target.type, target.id, 0b10)
 
     # Retrieve the latest bans for the specified user
+    # REIMPLEMENT
+    """
     def lastBans(self, command, user, data):
         params = data.split()
         target = user.nick
@@ -1765,6 +1598,7 @@ class Naoko(object):
                     self.logger.debug(e)
         if num > 5 or num < 1: return
         self.sqlExecute(package(self._lastBans, target, num))
+    """
 
     @hasPermission("ADD", False)
     def add(self, command, user, data, store=True, permission=True, wait=False):
@@ -1853,7 +1687,9 @@ class Naoko(object):
         self.sendChat(msg)
         if self.irc_nick and self.ircclient:
             self.ircclient.sendMsg(msg)
-
+    
+    # REIMPLEMENT
+    """
     def hybridMods(self, command, user, data):
         if not user.mod: return
         d = data.lower()
@@ -1871,8 +1707,11 @@ class Naoko(object):
                 if v:
                     output.append(h)
             self.enqueueMsg("Hybrid Mods: %s" % ",".join(output))
+    """
 
     # Displays and possibly modifies the permissions of a hybrid mod.
+    # REIMPLEMENT
+    """
     def permissions(self, command, user, data):
         m = re.match(r"^((\+|\-)((ALL)|(.*)) )?(.*)$", data.upper())
         if not m: return
@@ -1917,6 +1756,7 @@ class Naoko(object):
             if p & ma:
                 output.append(k)
         self.enqueueMsg("Permissions for %s: %s" % (name, "".join(output)))
+    """
 
     @hasPermission("RESTART")
     def restart(self, command, user, data):
@@ -1974,7 +1814,8 @@ class Naoko(object):
                     kicks.append(u)
             self.logger.info("Kicking %d unregistered users requested by %s", len(kicks), user.nick)
             self.asLeader(package(self._kickList, kicks))
-            return"""
+            return
+        """
 
         target = self.getUserByNick(args[0])
         if not target or target.rank > user.rank: return
@@ -1988,6 +1829,8 @@ class Naoko(object):
         for k in kicks:
             self._kickUser(k, sendMessage=False)
 
+    # REIMPLEMENT
+    """
     def ban(self, command, user, data):
         if not data or not (user.mod or self.hasPermission(user, "BAN")): return
         args = data.split(' ', 1)
@@ -1998,20 +1841,27 @@ class Naoko(object):
             self.asLeader(package(self._banUser, target.sid, args[1], modName=user.nick))
         else:
             self.asLeader(package(self._banUser, target.sid, modName=user.nick))
+    """
 
+    # REIMPLEMENT
+    """
     def unban(self, command, user, data):
         if not (user.mod or self.hasPermission(user, "BAN")): return
         target = data
         if not target: return
         self.unbanTarget = target
         self.getBanlist(command, user, data)
+    """
 
+    # REIMPLEMENT
+    """
     def getBanlist(self, command, user, data):
         if not (user.mod or self.hasPermission(user, "BAN")): return
         if data.lower() == "-v":
             self.verboseBanlist = True
         # If she is trying to unban a user defer the current ban.
         self.asLeader(package(self.send, "banlist"), deferred=(self.DEFERRED_MASKS["UNBAN"] if self.unbanTarget else 0))
+    """
 
     def cleverbot(self, command, user, data):
         if not hasattr(self.cbclient, "cleverbot"): return
@@ -2185,18 +2035,13 @@ class Naoko(object):
                 "user"  : user,
                 "num"   : num}
 
-    # Two functions that search the lists in an efficient manner
-
-    def getUserByNick(self, nick):
-        name = self.filterString(nick, True)[1].lower()
-        try: return (u for u in self.userlist.itervalues() if u.name.lower() == name).next()
-        except StopIteration: return None
-
     def getVideoIndexById(self, vid):
         try: return (idx for idx, ele in enumerate(self.vidlist) if ele.uid == vid).next()
         except StopIteration: return -1
     
     # Updates the required skip level
+    # REIMPLEMENT
+    """
     def updateSkipLevel(self):
         if not self.doneInit: return
         if not self.room_info["skip?"] or not "vote_settings" in self.room_info:
@@ -2207,6 +2052,7 @@ class Naoko(object):
             self.skipLevel = int(math.ceil(self.room_info["vote_settings"]["num"] * len(self.userlist) / 100.0))
         else:
             self.skipLevel = self.room_info["vote_settings"]["num"]
+    """
 
     # logs the user count to the database
     def _storeUserCount(self, count):
@@ -2215,11 +2061,14 @@ class Naoko(object):
             self.userCountTime = storeTime
             self.sqlExecute(package(self.insertUserCount, count, storeTime))
    
+    # REIMPLEMENT
+    """
     def checkSkip(self):
         if "num_votes" in self.room_info and self.room_info["num_votes"]["votes"] >= self.skipLevel:
             self.skips.append(time.time())
             if len(self.skips) == self.skips.maxlen and self.skips[-1] - self.skips[0] <= self.skips.maxlen * self.skip_interval: 
                 self.setSkip("",  self.selfUser, "off")
+    """
 
     # Returns whether or not a video id could possibly be valid
     # Guards against possible attacks and annoyances
@@ -2242,6 +2091,8 @@ class Naoko(object):
         else:
             return False
 
+    # REIMPLEMENT
+    """
     def takeLeader(self):
         if self.wasKicked:
             self.send("takeleader", self.sid)
@@ -2258,30 +2109,10 @@ class Naoko(object):
             self.send("turnoff_tv")
         else:
             self.send("takeleader", self.sid)
+    """
 
-    def asLeader(self, action=None, giveBack=True, deferred=0):
-        self.leader_queue.append(action)
-        if not self.doneInit: return
-        if giveBack and not self.pendingToss and not self.notGivingBack:
-            if self.leader_sid and self.leader_sid != self.sid:
-                oldLeader = self.leader_sid
-                self.pendingToss = True
-                self.deferredToss |= deferred
-                self.tossLeader = package(self._tossLeader, oldLeader)
-            if self.room_info["tv?"]:
-                self.pendingToss = True
-                self.deferredToss |= deferred
-                self.tossLeader = self._turnOnTV
-            if self.tossing:
-                self.pendingToss = True
-                self.deferredToss |= deferred
-        
-        if not giveBack: 
-            self.pendingToss = False
-            self.notGivingBack = True
-            self.deferredToss = 0
-        self.takeLeader()
-
+    # REIMPLEMENT
+    """
     def changeLeader(self, sid):
         if sid == self.leader_sid: return
         if sid == self.sid:
@@ -2290,6 +2121,7 @@ class Naoko(object):
         self.pendingToss = True
         self.tossLeader = package(self._tossLeader, sid)
         self.takeLeader()
+    """
 
     # Filters a string, removing invalid characters
     # Used to sanitize nicks or video titles for printing
@@ -2411,19 +2243,6 @@ class Naoko(object):
         finally:
             if f:
                 f.close()
-
-    def _shuffle(self, data):
-        if self.stthread != threading.currentThread():
-            raise Exception("_shuffle should not be called outside the Synchtube thread")
-        indices = {}
-        for i, v in enumerate(self.vidlist):
-            indices[v.v_sid] = i
-        newlist = []
-        for v in data:
-            newlist.append(self.vidlist[indices[v]])
-        self.vidLock.acquire()
-        self.vidlist = newlist
-        self.vidLock.release() 
 
     # Marks a video with the specified flags.
     # 1 << 0    : Invalid video, may become valid in the future. Reset upon successful manual add.
@@ -2556,6 +2375,8 @@ class Naoko(object):
             v_id = v_id[:6]
         return v_id   
 
+    # REIMPLEMENT
+    """
     def _lastBans(self, nick, num):
         rows = self.dbclient.getLastBans(nick, num)
         if not nick == "-all":
@@ -2578,6 +2399,7 @@ class Naoko(object):
                 self.enqueueMsg("Last ban:")
             for r in rows:
                 self.enqueueMsg("%s - %s by %s - %s" % (r[3], datetime.fromtimestamp(r[0] / 1000).isoformat(' '), r[2], r[1]))
+    """
 
     def _fixPlaylist(self, name, vids, nick):
         cleanVids = []
@@ -2736,8 +2558,8 @@ class Naoko(object):
             self.enqueueMsg("Kicked %s: (%s)" % (name, reason))
         self.sendChat("/kick %s %s" % (name, reason))
 
-    # By default none of the functions use this.
-    # Don't come crying to me if the bot bans the entire channel
+    # REIMPLEMENT
+    """
     def _banUser(self, sid, reason="Requested", sendMessage=True, modName=None):
         if not sid in self.userlist: return
         if not modName:
@@ -2746,19 +2568,12 @@ class Naoko(object):
             self.enqueueMsg("Banned %s: (%s)" % (self.userlist[sid].nick, reason))
         self.send("ban", sid)
         self.sqlExecute(package(self.dbclient.insertBan, self.userlist[sid], reason, time.time(), modName))
-
-    # Perform pending pending leader actions.
-    # This should _NOT_ be called outside the main SynchtubeClient's thread
-    def _leaderActions(self):
-        if self.stthread != threading.currentThread():
-            raise Exception("_leaderActions should not be called outside the Synchtube thread")
-        while len(self.leader_queue) > 0:
-            self.leader_queue.popleft()()
-        if self.pendingToss and not self.deferredToss:
-            self.tossLeader()
+    """
 
     # Give leader to another user using their sid(session id)
     # This command does not ensure the client is currently leader before executing
+    # REIMPLEMENT
+    """
     def _tossLeader(self, sid):
         # Short sleep to give Synchtube some time to react
         time.sleep(0.05)
@@ -2767,6 +2582,7 @@ class Naoko(object):
         self.tossing = True
         self.unToss = package(self.send, "takeleader", self.sid)
         self.send("toss", sid)
+    """
 
     def _getConfig(self):
         config = ConfigParser.RawConfigParser()
