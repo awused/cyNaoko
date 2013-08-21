@@ -247,18 +247,15 @@ class Naoko(object):
 
         self.io_url = self._readIOUrl()
 
-        # Uncomment this line if you're having trouble connecting due to 403 errors
-        # There errors are caused by Cloudflare and Naoko not being able to pass the checks on its anti-ddos checks
-        # You will have to manually load /assets/js/iourl.js for whichever website you are using
-
-        # TODO -- Make this an entry in Naoko.conf and automate it on 403 errors?
-        #if not self.io_url: self.io_url = "http://spitfire.cytu.be:8880"
-
         if not self.io_url:
             self.logger.info("Retrieving IO_URL")
-            self.io_url = urlopen("http://%s/assets/js/iourl.js" % (self.domain)).read()
-            # Unless someone has changed their iourl.js a lot this is going to work
-            self.io_url = io_url[io_url.rfind("var IO_URL"):].split('"')[1]
+            try:
+                self.io_url = urlopen("http://%s/assets/js/iourl.js" % (self.domain)).read()
+                # Unless someone has changed their iourl.js a lot this is going to work
+                self.io_url = io_url[io_url.rfind("var IO_URL"):].split('"')[1]
+            except Exception:
+                self.logger.warning("Unable to load iourl.js, using default io_url if available.")
+                self.io_url = self.default_io_url 
         else:
             self._writeIOUrl("")
 
@@ -918,7 +915,7 @@ class Naoko(object):
                 self.asLeader(package(self._banUser, user.sid, reason))
             else:
                 self.asLeader(package(self._kickUser, user.sid, reason))
-        """
+    """
 
     # Handlers for Cytube message types
     # All of them receive input in the form (tag, data)
@@ -2592,6 +2589,7 @@ class Naoko(object):
         self.name = config.get("naoko", "nick")
         self.pw   = config.get("naoko", "pass")
         self.domain = config.get("naoko", "domain")
+        self.default_io_url = config.get("naoko", "default_io_url")
         self.repl_port = config.get("naoko", "repl_port")
         self.hmod_admin = config.get("naoko", "hmod_admin").lower()
         self.spam_interval = float(config.get("naoko", "spam_interval"))
