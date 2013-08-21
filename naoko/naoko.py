@@ -1009,11 +1009,7 @@ class Naoko(object):
         self.send("delete", uid)
 
     def moveMedia(self, tag, data):
-        if data["after"] == "prepend":
-            after = -1
-        else:
-            after = self.getVideoIndexById(data["after"])
-        self._moveVideo(self.getVideoIndexById(data["from"]), after + 1)
+        self._moveVideo(data["from"], data["after"])
 
     def playlist(self, tag, data):
         self.clear(tag, None)
@@ -2530,11 +2526,18 @@ class Naoko(object):
                 self.state.time = -11 # Set the time to negative so it doesn't delete another video when the current video is deleted
             self.state.current -= 1
 
-    def _moveVideo(self, src, dest):
+    def _moveVideo(self, vid, after):
         if self.stthread != threading.currentThread():
             raise Exception("_moveVideo should not be called outside the Synchtube thread")
+        src = self.getVideoIndexById(vid)
         self.vidLock.acquire()
         video = self.vidlist.pop(src)
+
+        if after == "prepend":
+            dest = 0
+        else:
+            dest = self.getVideoIndexById(after) + 1
+            
         self.vidlist.insert(dest, video)
         
         # Cytube doesn't send a playlistUpdateIdx message after moves
