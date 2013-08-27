@@ -2027,6 +2027,12 @@ class Naoko(object):
                 "title" : title,
                 "user"  : user,
                 "num"   : num}
+    # Two functions that search the lists in an efficient manner
+
+    def getUserByNick(self, nick):
+        name = self.filterString(nick, True)[1].lower()
+        try: return (u for u in self.userlist.itervalues() if u.name.lower() == name).next()
+        except StopIteration: return None
 
     def getVideoIndexById(self, vid):
         try: return (idx for idx, ele in enumerate(self.vidlist) if ele.uid == vid).next()
