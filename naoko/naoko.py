@@ -272,10 +272,12 @@ class Naoko(object):
         self.sql_queue = deque(maxlen=0)
         self.api_queue = deque()
         self.st_action_queue = deque()
+        self.add_queue = deque()
         # Events are used to prevent busy-waiting
         self.sqlAction = threading.Event()
         self.stAction = threading.Event()
         self.apiAction = threading.Event()
+        self.addAction = threading.Event()
 
         # Initialize the clients that are always used
         self.apiclient = APIClient(self.apikeys)
@@ -301,6 +303,9 @@ class Naoko(object):
 
         self.stlistenthread = threading.Thread(target=Naoko._stlistenloop, args=[self])
         self.stlistenthread.start()
+
+        self.addthread = threading.Thread(target=Naoko._addloop, args=[self])
+        self.addthread.start()
 
         #self.playthread = threading.Thread(target=Naoko._playloop, args=[self])
         #self.playthread.start()
@@ -347,6 +352,7 @@ class Naoko(object):
                 status = status and (not self.dbfile or self.webserver_mode != "embedded" or self.webthread.isAlive())
                 #status = status and self.playthread.isAlive()
                 status = status and self.apithread.isAlive()
+                status = status and self.addthread.isAlive()
             except Exception as e:
                 self.logger.error(e)
                 status = False
@@ -393,13 +399,12 @@ class Naoko(object):
     # Responsible for handling messages from Synchtube
     def _stloop(self):
         client = self.client
-        while not self.closing.isSet() and self.stAction.wait():
+        while self.stAction.wait():
             self.stAction.clear()
+            if self.closing.isSet(): break
             while self.st_action_queue:
                 self.st_action_queue.popleft()()
-        else:
-            self.logger.info("Synchtube Loop Closed")
-            self.close()
+        self.logger.info("Synchtube Loop Closed")
 
     # Responsible for communicating with IRC
     def _ircloop(self):
@@ -488,7 +493,6 @@ class Naoko(object):
                     self.close()
         else:
             self.logger.info("IRC Loop Closed")
-            self.close()
 
     # Responsible for sending chat messages to IRC and Synchtube.
     # Only the $status command and error messages should send a chat message to Synchtube or IRC outside this thread.
@@ -562,8 +566,8 @@ class Naoko(object):
         self.db_logger.info("Starting Database Client")
         self.dbclient = client = NaokoDB(self.dbfile)
         while self.sqlAction.wait():
-            if self.closing.isSet(): break
             self.sqlAction.clear()
+            if self.closing.isSet(): break
             while self.sql_queue:
                 self.sql_queue.popleft()()
         self.logger.info("SQL Loop Closed")
@@ -572,11 +576,36 @@ class Naoko(object):
     # This includes validating Youtube videos and any future functionality
     def _apiloop(self):
         while self.apiAction.wait():
-            if self.closing.isSet(): break
             self.apiAction.clear()
+            if self.closing.isSet(): break
             while self.api_queue:
                 self.api_queue.popleft()()
         self.logger.info("API Loop Closed")
+
+    # Responsible for adding videos without triggering the anti-flood
+    def _addloop(self):
+        safety = 1.1 # 10% safety factor to account for transit time
+        burst = 10.0
+        sustained = 2.0 / safety
+        lastAdd = time.time() - 10
+        current = 0
+
+        while self.addAction.wait():
+            self.addAction.clear()
+            if self.closing.isSet(): break
+            while self.add_queue:
+                if time.time() - lastAdd > burst / sustained:
+                    current = 0
+                if current >= burst:
+                    # The eleventh video needs a bit of an extra delay
+                    # Reason for this is that the first ten videos likely arrive all at once and the server needs a second to process them
+                    delay = lastAdd + ((current == burst) + 1)/sustained - time.time()
+                    if delay > 0:
+                        time.sleep(delay)
+                self.add_queue.popleft()()
+                lastAdd = time.time()
+                current += 1
+        self.logger.info("Add Loop Closed")
 
     # Initialize stored settings that can be changed within Synchtube.
     # In the case of any error, default to everything being disabled.
@@ -826,6 +855,10 @@ class Naoko(object):
         self.api_queue.append(action)
         self.apiAction.set()
 
+    def addExecute(self, action):
+        self.add_queue.append(action)
+        self.addAction.set()
+
     def nextVideo(self):
         if len(self.vidlist) == 1:
             self.pendingSkip = True
@@ -866,6 +899,7 @@ class Naoko(object):
         self.apiAction.set()
         self.sqlAction.set()
         self.stAction.set()
+        self.addAction.set()
         if self.irc_nick and self.ircclient:
             self.ircclient.close()
 
@@ -1114,7 +1148,7 @@ class Naoko(object):
             self.chatCommand(user, msg)
         
         # Don't log messages from IRC, may result in a few unlogged messages
-        if user.name != self.name or msg[0] != '(':
+        if user.name != self.name or not msg or msg[0] != '(':
             self.sqlExecute(package(self.insertChat, msg=msg, username=user.name, 
                     userid=user.name, timestamp=None, protocol='CT', channel=self.room, flags=None))
 
@@ -2433,27 +2467,39 @@ class Naoko(object):
 
     def _addVideosToList(self, vids):
         for v in vids:
-            self.api_queue.append(package(self._addVideoToList, *v))
+            self.add_queue.append(package(self._addVideoToList, *v))
             #self.send("am", [v[0], v[1], self.filterString(v[2])[1],"http://i.ytimg.com/vi/%s/default.jpg" % (v[1]), v[3]/1000.0])
-        self.apiAction.set()
+        self.addAction.set()
 
     def _addVideoToList(self, site, vid, url=None):
+        if site == "sc":
+            self.api_queue.appendleft(package(self._addSoundcloudToList, site, vid, url))
+            self.apiAction.set()
+            return
+        
         packet = {"id"  : vid,
                 "type"  : site,
                 "pos"   : "end"}
         
-        if site == "sc":
-            if url:
-                packet["id"] = url
-            else:
-                packet["id"] = self.apiclient.getSoundcloudURL(vid)
         if site == "vm":
             packet["type"] = "vi"
 
         self.send("queue", packet)
-
         self.apiExecute(package(self._checkAddedVideo, site, vid))
+    
+    def _addSoundcloudToList(self, site, vid, url=None):
+        packet = {"id"  : vid,
+                "type"  : site,
+                "pos"   : "end"}
         
+        if url:
+            packet["id"] = url
+        else:
+            packet["id"] = self.apiclient.getSoundcloudURL(vid)
+        
+        self.addExecute(package(self.send, "queue", packet))
+        self.apiExecute(package(self._checkAddedVideo, site, vid))
+
     def _checkAddedVideo(self, site, vid):
         data = self.apiclient.getVideoInfo(site, vid)
         if data == "Unknown": return
