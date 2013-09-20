@@ -1683,7 +1683,7 @@ class Naoko(object):
         title, dur, valid = data
         if valid:
             self.logger.debug("Adding video %s %s %s %s", title, site, vid, dur)
-            self._addVideoToList(site, vid, url) 
+            self.addExecute(package(self._addVideoToList, site, vid, url, False)) 
             if store and not dur == 0:
                 self.sqlExecute(package(self.insertVideo, site, vid, title, dur, nick))
         else:
@@ -2471,8 +2471,8 @@ class Naoko(object):
             #self.send("am", [v[0], v[1], self.filterString(v[2])[1],"http://i.ytimg.com/vi/%s/default.jpg" % (v[1]), v[3]/1000.0])
         self.addAction.set()
 
-    def _addVideoToList(self, site, vid, url=None):
-        if site == "sc":
+    def _addVideoToList(self, site, vid, url=None, check=True):
+        if site == "sc" and not url:
             self.api_queue.appendleft(package(self._addSoundcloudToList, site, vid, url))
             self.apiAction.set()
             return
@@ -2483,9 +2483,12 @@ class Naoko(object):
         
         if site == "vm":
             packet["type"] = "vi"
+        if site == "sc":
+            packet["type"] = url
 
         self.send("queue", packet)
-        self.apiExecute(package(self._checkAddedVideo, site, vid))
+        if check:
+            self.apiExecute(package(self._checkAddedVideo, site, vid))
     
     def _addSoundcloudToList(self, site, vid, url=None):
         packet = {"id"  : vid,
