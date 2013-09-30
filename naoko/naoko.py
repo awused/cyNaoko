@@ -584,7 +584,7 @@ class Naoko(object):
 
     # Responsible for adding videos without triggering the anti-flood
     def _addloop(self):
-        safety = 1.1 # 10% safety factor to account for transit time
+        safety = 1.20 # 20% safety factor
         burst = 10.0
         sustained = 2.0 / safety
         lastAdd = time.time() - 10
