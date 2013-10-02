@@ -688,7 +688,7 @@ class Naoko(object):
                          "self"             : self.selfInfo,
                          "kick"             : self.kicked}"""
         self.handlers = {"chatMsg"          : self.chat,
-                        "channelOpts"       : self.channelOpts,
+                        "channelOpts"       : self.ignore,
                         "userlist"          : self.users,
                         "addUser"           : self.addUser,
                         "userLeave"         : self.remUser,
@@ -1186,15 +1186,6 @@ class Naoko(object):
         else:
             self.leading.clear()
     """
-
-    # Serves as a decent enough indicator of initialization being done
-    def channelOpts(self, tag, data):
-        
-        if not self.doneInit:
-            self._writeIOUrl(self.io_url)
-            if self.managing and self.state.state == self._STATE_UNKNOWN:
-                self.stExecute(package(self.addRandom, "addrandom", self.selfUser, ""))
-            self.doneInit = True
 
     # Command handlers for commands that users can type in Synchtube chat
     # All of them receive input in the form (command, user, data)
@@ -2238,6 +2229,13 @@ class Naoko(object):
         self.userlist[user.name] = user
         if isSelf:
             self.selfUser = user
+            
+            # Avoid issues with empty rooms
+            if not self.doneInit:
+                self._writeIOUrl(self.io_url)
+                if self.managing and self.state.state == self._STATE_UNKNOWN:
+                    self.stExecute(package(self.addRandom, "addrandom", self.selfUser, ""))
+                self.doneInit = True
 
     # Write the current status of the hybrid mods and a short warning about editing the resulting file.
     def _writePersistentSettings(self):
