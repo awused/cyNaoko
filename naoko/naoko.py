@@ -37,6 +37,11 @@ except ImportError:
     class CleverbotClient(object):
         pass
 
+try:
+    from lib.mumble.client import MumbleClient
+except ImportError:
+    MumbleClient = False
+
 # Package arguments for later use.
 # Due to the way python handles scopes this needs to be used to avoid race conditions.
 def package(fn, *args, **kwargs):
@@ -269,6 +274,7 @@ class Naoko(object):
         # Some are initialized with maxlen = 0 so they will silently discard actions meant for non-existent threads
         self.st_queue = deque()
         self.irc_queue = deque(maxlen=0)
+        self.mumble_queue = deque(maxlen=0)
         self.sql_queue = deque(maxlen=0)
         self.api_queue = deque()
         self.st_action_queue = deque()
@@ -283,6 +289,7 @@ class Naoko(object):
         self.apiclient = APIClient(self.apikeys)
         self.cbclient = CleverbotClient()
         self.client.connect()
+        self.mumbleclient = False
 
         # Set a default selfUser with admin permissions, it will be updated later
         self.selfUser = CytubeUser(self.name, 3, False, {"afk": False}, {"text": "", "image": ""}, deque(maxlen=3))
@@ -318,6 +325,10 @@ class Naoko(object):
             self.ircclient = False
             self.ircthread = threading.Thread(target=Naoko._ircloop, args=[self])
             self.ircthread.start()
+        
+        if self.mumble_host and MumbleClient:
+            self.mumblethread = threading.Thread(target=Naoko._mumbleloop, args=[self])
+            self.mumblethread.start()
 
         if self.dbfile:
             self.sql_queue = deque()
@@ -350,6 +361,8 @@ class Naoko(object):
                 status = status and (not self.client.heartBeatEvent or self.client.hbthread.isAlive())
                 status = status and (not self.dbfile or self.sqlthread.isAlive())
                 status = status and (not self.dbfile or self.webserver_mode != "embedded" or self.webthread.isAlive())
+                status = status and (not self.mumbleclient or self.mumblethread.isAlive())
+                status = status and (not self.mumbleclient or not self.mumbleclient.heartBeatEvent or self.mumbleclient.hbthread.isAlive())
                 #status = status and self.playthread.isAlive()
                 status = status and self.apithread.isAlive()
                 status = status and self.addthread.isAlive()
@@ -396,6 +409,21 @@ class Naoko(object):
             self.logger.info("Synchtube Listening Loop Closed")
             self.close()
 
+    def _mumbleloop(self):
+        self.mumbleclient = client = MumbleClient(self.mumble_host, self.mumble_port, self.mumble_name, self.mumble_pw, self.mumble_channel)
+        client.connect()
+
+        self.mumble_queue = deque()
+        while not self.closing.isSet():
+            name, msg = client.recvMessage()
+            
+            self.sqlExecute(package(self.insertChat, msg=msg, username=name, 
+                        userid=name, timestamp=None, protocol='MUMBLE', channel="MUMBLE", flags=None))
+
+            self.enqueueMsg("(%s) %s" % (name, self._fixChat(msg)), mumble=False)
+        else:
+            self.logger.info("Mumble Loop Closed")
+
     # Responsible for handling messages from Synchtube
     def _stloop(self):
         client = self.client
@@ -427,7 +455,7 @@ class Naoko(object):
                         self.sqlExecute(package(self.insertChat, msg=msg, username=name, 
                                 userid=name, timestamp=None, protocol='IRC', channel=self.channel, flags=None))
 
-                        self.st_queue.append("(" + name + ") " + msg)
+                        self.enqueueMsg(("(" + name + ") " + msg), irc=False)
                         self.chatCommand(IRCUser(*(name, 1, False)), msg, True)
                     self.irc_logger.info("IRC %r:%r", name, msg)
                 # Currently ignore messages sent directly to her
@@ -499,19 +527,23 @@ class Naoko(object):
     def _chatloop(self):
         while not self.closing.isSet():
             # Detect when far too many messages are being sent and clear the queue
-            if len(self.irc_queue) > 20 or len(self.st_queue) > 20:
+            if len(self.irc_queue) > 20 or len(self.st_queue) > 20 or len(self.mumble_queue) > 20:
                 time.sleep(5)
                 self.irc_queue.clear()
                 self.st_queue.clear()
+                self.mumble_queue.clear()
                 continue
             if self.muted:
                 self.irc_queue.clear()
                 self.st_queue.clear()
+                self.mumble_queue.clear()
             else:
                 if self.irc_queue:
                     self.ircclient.sendMsg(self.irc_queue.popleft())
                 if self.st_queue:
                     self.sendChat(self.st_queue.popleft())
+                if self.mumble_queue:
+                    self.mumbleclient.sendChat(self.mumble_queue.popleft())
             time.sleep(self.spam_interval)
         else:
             self.logger.info("Chat Loop Closed")
@@ -881,9 +913,10 @@ class Naoko(object):
 
     # Enqueues a message for sending to both IRC and Synchtube
     # This should not be used for bridging chat between IRC and Synchtube
-    def enqueueMsg(self, msg):
-        self.irc_queue.append(msg)
-        self.st_queue.append(msg)
+    def enqueueMsg(self, msg, st=True, irc=True, mumble=True):
+        if irc: self.irc_queue.append(msg)
+        if st: self.st_queue.append(msg)
+        if mumble: self.mumble_queue.append(msg)
 
     def close(self):
         self.closeLock.acquire()
@@ -902,6 +935,8 @@ class Naoko(object):
         self.addAction.set()
         if self.irc_nick and self.ircclient:
             self.ircclient.close()
+        if self.mumbleclient:
+            self.mumbleclient.close()
 
     def sendChat(self, msg):
         #self.logger.debug(repr(msg))
@@ -1000,7 +1035,7 @@ class Naoko(object):
                     self.checkVideo(data["type"], data["id"])
 
                 if self.doneInit:
-                    self.enqueueMsg("Playing: %s" % (data["title"]))
+                    self.enqueueMsg("Playing: %s" % (data["title"]), mumble=False)
  
             if self.state.dur - self.state.time <= 6.0:
                 # This should make false positives as rare as possible
@@ -1140,8 +1175,8 @@ class Naoko(object):
         msg = self._fixChat(data["msg"])
 
         self.chat_logger.info("%s: %r" , user.name, msg)
-        if not user.name == self.name and self.irc_nick and self.doneInit:
-            self.irc_queue.append("(" + user.name + ") " + msg)
+        if not user.name == self.name and self.doneInit:
+            self.enqueueMsg(("(" + user.name + ") " + msg), st=False)
         
         # Only interpret regular messages as commands
         if not data["msgclass"]:
@@ -2666,4 +2701,9 @@ class Naoko(object):
         self.webserver_port = config.get("naoko", "webserver_port")
         self.webserver_protocol = config.get("naoko", "webserver_protocol")
         self.webserver_url = config.get("naoko", "webserver_url")
+        self.mumble_host = config.get("naoko", "mumble_host")
+        self.mumble_port = int(config.get("naoko", "mumble_port"))
+        self.mumble_name = config.get("naoko", "mumble_name")
+        self.mumble_pw = config.get("naoko", "mumble_pass")
+        self.mumble_channel = config.get("naoko", "mumble_channel") 
 

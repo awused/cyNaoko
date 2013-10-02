@@ -8,6 +8,7 @@
     She will wait DEFAULT_WAIT, which is set to 3 hours, if a leader changes to a Dailymotion video bypassing the playlist, so curl is strongly recommended.
     This bug does not affect Windows users and they will not need to install any additional programs.
 - Running the web server with the fastcgi protocol requires that flup be installed. It can be installed using pip flup or easy\_install flup
+- Connecting to Mumble requires protobuf to be installed. See the mumble section for more instructions.
 
 ## Usage
 <pre>
@@ -43,6 +44,34 @@ To control standalone mode use:
 </pre>
 
 The web server can be run either as an http server using the bottle.py development server, which is slow but straightforward, or as a fastcgi server using flup. The fastcgi server only works in standalone mode. 
+
+## Mumble Usage
+By default Mumble support is disabled. Configure Mumble support in `naoko.conf`
+Mumble support requires Google's protobuf and its python bindings.
+Naoko was developed using protobuf 2.5.0. Mumble support was not tested on Windows.
+
+I do not currently provide instructions to get Mumble support working on Windows, but I would be happy to hear about your success or failure on Windows.
+
+See https://developers.google.com/protocol-buffers/docs/overview for instructions on installing protobuf.
+
+After installing protobuf you must compile Mumble.proto in the naoko/lib/mumble directory.
+
+<pre>
+    protoc --python-out=. Mumble.proto
+</pre>
+
+If there is an error about missing shared libraries try:
+
+<pre>
+    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib
+</pre>
+
+Or, for a more permanent solution:
+
+</pre>
+    sudo ldconfig /usr/local/lib
+</pre>
+
 
 ## History by Desuwa
 With Synchtube's demise, our small animu community survived in IRC, waiting for a suitable replacement. Due to the work involved none of us were going to start our own replacement site. With CyTube being open source, actively developed, and not directly tied to any particular Synchtube room it seemed the obvious choice.
