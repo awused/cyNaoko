@@ -9,7 +9,6 @@ import threading
 import Mumble_pb2
 import logging
 from collections import namedtuple
-import asdfasdfaas
 
 from settings import *
 
