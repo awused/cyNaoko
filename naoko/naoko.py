@@ -1170,7 +1170,9 @@ class Naoko(object):
     def chat(self, tag, data):
         # Best to just ignore every chat message until initialization is done
         if not self.doneInit: return
-        
+       
+        if not data["username"] in self.userlist: return
+
         user = self.userlist[data["username"]]
         msg = self._fixChat(data["msg"])
 
