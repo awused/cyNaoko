@@ -255,7 +255,7 @@ class Naoko(object):
         if not self.io_url:
             self.logger.info("Retrieving IO_URL")
             try:
-                self.io_url = urlopen("http://%s/assets/js/iourl.js" % (self.domain)).read()
+                io_url = urlopen("http://%s/assets/js/iourl.js" % (self.domain)).read()
                 # Unless someone has changed their iourl.js a lot this is going to work
                 self.io_url = io_url[io_url.rfind("var IO_URL"):].split('"')[1]
             except Exception:
