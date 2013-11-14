@@ -961,7 +961,7 @@ class Naoko(object):
     # Otherwise saves that information for if she does take lead.
     def invalidVideo(self, reason):
         if reason and self.managing:
-            self.enqueueMsg(reason)
+            self.enqueueMsg(reason, irc=False, mumble=False)
             self.nextVideo()
 
     # Kicks a user for something they did in chat
@@ -1035,7 +1035,7 @@ class Naoko(object):
                     self.checkVideo(data["type"], data["id"])
 
                 if self.doneInit:
-                    self.enqueueMsg("Playing: %s" % (data["title"]), mumble=False)
+                    self.enqueueMsg("Playing: %s" % (data["title"]), irc=False, mumble=False)
  
             if self.state.dur - self.state.time <= 6.0:
                 # This should make false positives as rare as possible
@@ -2261,6 +2261,7 @@ class Naoko(object):
         #userinfo['nick'] = self.filterString(userinfo['nick'], True)[1]
         userinfo['msgs'] = deque(maxlen=3)
         #userinfo['nickChanges'] = 0
+        userinfo["leader"] = False
         assert set(userinfo.keys()) == set(CytubeUser._fields), "User information has changed formats. Tell Desuwa."
         user = CytubeUser(**userinfo)
         self.userlist[user.name] = user
