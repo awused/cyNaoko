@@ -820,6 +820,7 @@ class Naoko(object):
                                 "skip"              : self.skip,
                                 "accident"          : self.accident,
                                 "loadplaylist"      : self.loadPlaylist,
+                                "shuffle"           : self.shuffleList,
                                 # Functions that change the states of users
                                 "kick"              : self.kick}
                                 
@@ -1346,13 +1347,9 @@ class Naoko(object):
         self._writePersistentSettings()
     """
     
-    # REIMPLEMENT
-    """
+    @hasPermission("SHUFFLE")
     def shuffleList(self, command, user, data):
-        if not (user.mod or self.hasPermission(user, "SHUFFLE")): return
-        self.shuffleBump = self.state.current
-        self.asLeader(package(self.send, "shuffle"), deferred=self.DEFERRED_MASKS["SHUFFLE"])
-    """
+        self.send("shufflePlaylist")
 
     def help(self, command, user, data):
         self.enqueueMsg("I only do this out of pity. https://raw.github.com/Suwako/cyNaoko/master/commands.txt")
