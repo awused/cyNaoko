@@ -1182,7 +1182,7 @@ class Naoko(object):
             self.enqueueMsg(("(" + user.name + ") " + msg), st=False)
         
         # Only interpret regular messages as commands
-        if not data["meta"]:
+        if not data["meta"].get("addClass"):
             self.chatCommand(user, msg)
         
         # Don't log messages from IRC, may result in a few unlogged messages
