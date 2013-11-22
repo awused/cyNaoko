@@ -244,6 +244,9 @@ class Naoko(object):
         self.state.reason = None
         self.skipOverride = False # Overrides the state when determining whether a video should be deleted
 
+        # Room settings
+        self.channelOpts = {}
+        
         # Tracks when she needs to update her playback status
         # This is used to interrupt her timer as she is waiting for the end of a video
         self.playerAction = threading.Event()
@@ -720,7 +723,7 @@ class Naoko(object):
                          "self"             : self.selfInfo,
                          "kick"             : self.kicked}"""
         self.handlers = {"chatMsg"          : self.chat,
-                        "channelOpts"       : self.ignore,
+                        "channelOpts"       : self.channelOpts,
                         "userlist"          : self.users,
                         "addUser"           : self.addUser,
                         "userLeave"         : self.remUser,
@@ -822,7 +825,9 @@ class Naoko(object):
                                 "loadplaylist"      : self.loadPlaylist,
                                 "shuffle"           : self.shuffleList,
                                 # Functions that change the states of users
-                                "kick"              : self.kick}
+                                "kick"              : self.kick,
+                                # Other
+                                "setskip"           : self.setSkip}
                                 
 
     def _initIRCCommandHandlers(self):
@@ -1224,6 +1229,9 @@ class Naoko(object):
         else:
             self.leading.clear()
     """
+    
+    def channelOpts(self, tag, data):
+        self.channelOpts = data
 
     # Command handlers for commands that users can type in Synchtube chat
     # All of them receive input in the form (command, user, data)
@@ -1239,37 +1247,44 @@ class Naoko(object):
         self.enqueueMsg("A terrible accident has befallen the currently playing video.")
         self.nextVideo()
     
-    # Set the skipping mode. Takes either on, off, x, or x%.
-    # REIMPLEMENT
-    """
+    @hasPermission("SKIP")
     def setSkip(self, command, user, data):
-        if not (user.mod or self.hasPermission(user, "SETSKIP")): return
-        m = re.match("^((on)|(off)|([1-9][0-9]*)(%)?)( .*)?$", data, re.IGNORECASE)
-        if m:
-            g = m.groups()
-            if g[2]:
-                if self.room_info["skip?"]:
-                    self.asLeader(package(self.send, "skip?", False))
-            
-            settings = None
-            if g[1]:
-                if not self.room_info["skip?"]:
-                    if "vote_settings" in self.room_info:
-                        settings = self.room_info["vote_settings"]
-                    else:
-                        # If there is no known previous setting, default to 33%.
-                        settings = {"settings": "percent", "num": 33}
-            if g[3]:
-                settings = {"num": int(g[3]), "settings": ("percent" if g[4] else "thres")}
-            
-            if settings:
-                self.asLeader(package(self._setSkip, settings.copy()))
-
-    def _setSkip(self, settings):
-        self.send("skip?", True)
-        self.send("vote_settings", settings)
-    """
-
+        # Declare varriables 
+        allow_voteskip = self.channelOpts["allow_voteskip"]
+        voteskip_ratio = self.channelOpts["voteskip_ratio"]
+        fail = False
+        
+        # Decode data
+        if data=="on":
+            allow_voteskip = True
+        elif data=="off":
+            allow_voteskip = False
+        else:
+            try:
+                voteskip_ratio = float(data)
+            except:
+                try:
+                    # Check if data is a percentage
+                    data = (float(data.replace("%","")))/100
+                    voteskip_ratio = round(data,3)
+                except:
+                    fail = True
+        
+        # Send options frame with only voteskip items changed
+        if not fail:
+            self.send("setOptions",{
+                "allow_voteskip": allow_voteskip,
+                "voteskip_ratio": voteskip_ratio,
+                "afk_timeout": self.channelOpts["afk_timeout"],
+                "pagetitle": self.channelOpts["pagetitle"],
+                "maxlength": self.channelOpts["maxlength"],
+                "externalcss": self.channelOpts["externalcss"],
+                "externaljs": self.channelOpts["externaljs"],
+                "chat_antiflood": self.channelOpts["chat_antiflood"],
+                "show_public": self.channelOpts["show_public"],
+                "enable_link_regex": self.channelOpts["enable_link_regex"]
+                })
+    
     # REIMPLEMENT
     """
     def autoSetSkip(self, command, user, data):
@@ -2706,4 +2721,3 @@ class Naoko(object):
         self.mumble_name = config.get("naoko", "mumble_name")
         self.mumble_pw = config.get("naoko", "mumble_pass")
         self.mumble_channel = config.get("naoko", "mumble_channel") 
-
