@@ -299,7 +299,6 @@ class Naoko(object):
         
         # Log In
         self.send ("login", {"name": self.name, "pw": self.pw})
-        
 
         # Start the threads that are required for all normal operation
         self.chatthread = threading.Thread(target=Naoko._chatloop, args=[self])
@@ -742,7 +741,8 @@ class Naoko(object):
                         "acl"               : self.acl,
                         "usercount"         : self.userCount,
                         "login"             : self.login,
-                        "setPlaylistLocked" : self.playlistLock}
+                        "setPlaylistLocked" : self.playlistLock,
+                        "setAFK"            : self.setAFK}
                         #leader  -- Use being leader as a signal to actively manage the playlist?
                                 # -- Requires actually implementing media switching and sending mediaUpdates every 5 seconds
                                                     # Note: seems to be 5 seconds regardless of if a media switch has occurred
@@ -1105,10 +1105,17 @@ class Naoko(object):
                 raise Exception(data["error"])
             else:
                 raise Exception("Failed to login.")
+        # Set AFK on join
+        self.sendChat("/afk")
 
     def playlistLock(self, tag, data):
         self.room_info["locked"] = data["locked"]
 
+    def setAFK(self, tag, data):
+        if not data["name"]==self.name:return
+        if not data["afk"]:
+            self.sendChat("/afk")
+        
     def addUser(self, tag, data, isSelf=False):
         self._addUser(data, data["name"] == self.name)
   
@@ -2706,4 +2713,3 @@ class Naoko(object):
         self.mumble_name = config.get("naoko", "mumble_name")
         self.mumble_pw = config.get("naoko", "mumble_pass")
         self.mumble_channel = config.get("naoko", "mumble_channel") 
-
